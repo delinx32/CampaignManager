@@ -1,0 +1,7 @@
+# Uploaded images and user data
+images/
+campaigns/
+archived-campaigns/
+
+# Node modules
+node_modules/

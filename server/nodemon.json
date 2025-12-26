@@ -1,0 +1,8 @@
+{
+  "watch": ["server.js", "settings.json", "prompt-templates/*.txt"],
+  "ext": "js,json,txt",
+  "execMap": {
+    "js": "node --experimental-modules"
+  },
+  "ignore": ["images/*", "maps/*", "actors/*", "playertokens/*", "npctokens/*"]
+}

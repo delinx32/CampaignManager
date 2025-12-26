@@ -1,0 +1,570 @@
+.campaign-selection {
+  min-height: 100vh;
+  padding: 2rem;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: #fff;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.header h1 {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(to right, #4da6ff, #7b68ee);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subtitle {
+  font-size: 1.2rem;
+  color: #a0a0a0;
+}
+
+.loading {
+  text-align: center;
+  font-size: 1.5rem;
+  padding: 4rem;
+  color: #a0a0a0;
+}
+
+.error-message {
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid #dc3545;
+  color: #ff6b6b;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-message button {
+  background: transparent;
+  border: none;
+  color: #ff6b6b;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+}
+
+.campaigns-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.campaign-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  position: relative;
+}
+
+.campaign-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #4da6ff;
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(77, 166, 255, 0.3);
+}
+
+.delete-button {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid rgba(220, 53, 69, 0.4);
+  color: #ff6b6b;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  opacity: 0;
+  transition: all 0.2s ease;
+  padding: 0;
+  z-index: 10;
+}
+
+.rename-button {
+  position: absolute;
+  top: 0.75rem;
+  right: 6.25rem;
+  background: rgba(123, 104, 238, 0.2);
+  border: 1px solid rgba(123, 104, 238, 0.4);
+  color: #7b68ee;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  opacity: 0;
+  transition: all 0.2s ease;
+  padding: 0;
+  z-index: 10;
+}
+
+.edit-button {
+  position: absolute;
+  top: 0.75rem;
+  right: 3.5rem;
+  background: rgba(77, 166, 255, 0.2);
+  border: 1px solid rgba(77, 166, 255, 0.4);
+  color: #4da6ff;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  opacity: 0;
+  transition: all 0.2s ease;
+  padding: 0;
+  z-index: 10;
+}
+
+.campaign-card:hover .delete-button,
+.campaign-card:hover .edit-button,
+.campaign-card:hover .rename-button {
+  opacity: 1;
+}
+
+.delete-button:hover {
+  background: rgba(220, 53, 69, 0.4);
+  border-color: #dc3545;
+  transform: scale(1.1);
+}
+
+.rename-button:hover {
+  background: rgba(123, 104, 238, 0.4);
+  border-color: #7b68ee;
+  transform: scale(1.1);
+}
+
+.edit-button:hover {
+  background: rgba(77, 166, 255, 0.4);
+  border-color: #4da6ff;
+  transform: scale(1.1);
+}
+
+.campaign-description {
+  color: #b0b0b0;
+  font-size: 0.9rem;
+  margin: 0.5rem 0;
+  font-style: italic;
+  max-width: 90%;
+}
+
+.edit-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.edit-input,
+.edit-textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.edit-input.readonly {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.edit-input:focus,
+.edit-textarea:focus {
+  outline: none;
+  border-color: #4da6ff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.edit-textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.rename-input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 1rem;
+  margin: 1rem 0;
+}
+
+.rename-input:focus {
+  outline: none;
+  border-color: #4da6ff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.confirmation-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.save-button,
+.cancel-edit-button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.save-button {
+  background: #4da6ff;
+  color: #fff;
+}
+
+.save-button:hover {
+  background: #3d8ae5;
+  transform: scale(1.05);
+}
+
+.cancel-edit-button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.cancel-edit-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.campaign-card h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  color: #fff;
+}
+
+.scenario-count {
+  color: #a0a0a0;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.campaign-action {
+  color: #4da6ff;
+  margin: 0.5rem 0 0 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.campaign-card.create-new {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.campaign-card.create-new:hover {
+  border-color: #7b68ee;
+  box-shadow: 0 8px 24px rgba(123, 104, 238, 0.3);
+}
+
+.plus-icon {
+  font-size: 3rem;
+  color: #7b68ee;
+  margin-bottom: 0.5rem;
+}
+
+.create-form {
+  max-width: 500px;
+  margin: 2rem auto 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2rem;
+}
+
+.create-form h3 {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  color: #fff;
+}
+
+.create-form input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+.create-form input:focus {
+  outline: none;
+  border-color: #4da6ff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.form-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+}
+
+.form-actions button {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.form-actions button[type="submit"] {
+  background: #4da6ff;
+  color: #fff;
+}
+
+.form-actions button[type="submit"]:hover {
+  background: #3d8ae5;
+  transform: scale(1.05);
+}
+
+.form-actions button[type="button"] {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.form-actions button[type="button"]:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.confirmation-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.confirmation-dialog {
+  background: #1a1a2e;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 500px;
+  width: 90%;
+}
+
+.confirmation-dialog h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: #fff;
+}
+
+.confirmation-dialog p {
+  color: #d0d0d0;
+  margin-bottom: 1rem;
+}
+
+.confirmation-note {
+  font-size: 0.9rem;
+  color: #a0a0a0;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+.confirmation-actions button {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.confirm-button {
+  background: #dc3545;
+  color: #fff;
+}
+
+.confirm-button:hover {
+  background: #c82333;
+  transform: scale(1.05);
+}
+
+.cancel-button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.cancel-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.archived-section {
+  max-width: 1200px;
+  margin: 3rem auto 0;
+  padding-top: 2rem;
+  border-top: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.archived-toggle {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.archived-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.archived-list {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.archived-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.2s ease;
+}
+
+.archived-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.archived-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.archived-name {
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.archived-date {
+  color: #a0a0a0;
+  font-size: 0.85rem;
+}
+
+.archived-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.restore-button {
+  background: rgba(77, 166, 255, 0.2);
+  border: 1px solid rgba(77, 166, 255, 0.4);
+  color: #4da6ff;
+  padding: 0.5rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+}
+
+.restore-button:hover {
+  background: rgba(77, 166, 255, 0.3);
+  border-color: #4da6ff;
+  transform: scale(1.05);
+}
+
+.permanent-delete-button {
+  background: rgba(220, 53, 69, 0.15);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  color: #ff6b6b;
+  padding: 0.5rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+}
+
+.permanent-delete-button:hover {
+  background: rgba(220, 53, 69, 0.25);
+  border-color: #dc3545;
+  transform: scale(1.05);
+}
+
+.confirmation-note.warning {
+  color: #ff6b6b;
+  font-weight: 500;
+}
+
+.confirm-button.danger {
+  background: #dc3545;
+}
+
+.confirm-button.danger:hover {
+  background: #a02430;
+}

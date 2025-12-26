@@ -1,0 +1,413 @@
+.scenario-selection {
+  min-height: 100vh;
+  padding: 2rem;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: #fff;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 3rem;
+  position: relative;
+}
+
+.back-button {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+}
+
+.back-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: #4da6ff;
+  transform: translateX(-4px);
+}
+
+.header h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(to right, #4da6ff, #7b68ee);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subtitle {
+  font-size: 1.2rem;
+  color: #a0a0a0;
+}
+
+.loading {
+  text-align: center;
+  font-size: 1.5rem;
+  padding: 4rem;
+  color: #a0a0a0;
+}
+
+.error-message {
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid #dc3545;
+  color: #ff6b6b;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-message button {
+  background: transparent;
+  border: none;
+  color: #ff6b6b;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+}
+
+.scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.scenario-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  position: relative;
+}
+
+.scenario-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #4da6ff;
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(77, 166, 255, 0.3);
+}
+
+.scenario-card h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  color: #fff;
+}
+
+.map-count {
+  color: #a0a0a0;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.scenario-card.create-new {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.scenario-card.create-new:hover {
+  border-color: #7b68ee;
+  box-shadow: 0 8px 24px rgba(123, 104, 238, 0.3);
+}
+
+.plus-icon {
+  font-size: 3rem;
+  color: #7b68ee;
+  margin-bottom: 0.5rem;
+}
+
+.create-form {
+  max-width: 500px;
+  margin: 2rem auto 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2rem;
+}
+
+.create-form h3 {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  color: #fff;
+}
+
+.create-form input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+.create-form input:focus {
+  outline: none;
+  border-color: #4da6ff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.form-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+}
+
+.form-actions button {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.form-actions button[type="submit"] {
+  background: #4da6ff;
+  color: #fff;
+}
+
+.form-actions button[type="submit"]:hover {
+  background: #3d8ae5;
+  transform: scale(1.05);
+}
+
+.form-actions button[type="button"] {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.form-actions button[type="button"]:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.scenario-card .rename-button,
+.scenario-card .edit-button {
+  position: absolute;
+  top: 0.75rem;
+  padding: 0.5rem;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1.2rem;
+  transition: all 0.2s ease;
+  opacity: 0;
+  z-index: 10;
+}
+
+.scenario-card:hover .rename-button,
+.scenario-card:hover .edit-button {
+  opacity: 1;
+}
+
+.scenario-card .rename-button {
+  right: 3.5rem;
+  background: rgba(138, 43, 226, 0.2);
+  border-color: rgba(138, 43, 226, 0.4);
+  color: #b794f6;
+}
+
+.scenario-card .rename-button:hover {
+  background: rgba(138, 43, 226, 0.3);
+  border-color: #b794f6;
+  transform: scale(1.1);
+}
+
+.scenario-card .edit-button {
+  right: 0.75rem;
+  background: rgba(77, 166, 255, 0.2);
+  border-color: rgba(77, 166, 255, 0.4);
+  color: #4da6ff;
+}
+
+.scenario-card .edit-button:hover {
+  background: rgba(77, 166, 255, 0.3);
+  border-color: #4da6ff;
+  transform: scale(1.1);
+}
+
+.edit-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.edit-input {
+  padding: 0.5rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 1rem;
+}
+
+.edit-input.readonly {
+  background: rgba(255, 255, 255, 0.05);
+  color: #a0a0a0;
+  cursor: not-allowed;
+}
+
+.edit-textarea {
+  padding: 0.5rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.edit-textarea:focus,
+.edit-input:focus {
+  outline: none;
+  border-color: #4da6ff;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.save-button,
+.cancel-button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.save-button {
+  background: #4da6ff;
+  color: #fff;
+}
+
+.save-button:hover {
+  background: #3d8ae5;
+}
+
+.cancel-button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.cancel-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.description {
+  color: #b0b0b0;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+  line-height: 1.4;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: linear-gradient(135deg, #1e1e3f 0%, #1a1a2e 100%);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 2rem;
+  min-width: 400px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal-content h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: #fff;
+}
+
+.modal-content p {
+  color: #b0b0b0;
+  margin-bottom: 1.5rem;
+}
+
+.rename-input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.rename-input:focus {
+  outline: none;
+  border-color: #4da6ff;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+}
+
+.modal-buttons button {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modal-buttons button:first-child {
+  background: #4da6ff;
+  color: #fff;
+}
+
+.modal-buttons button:first-child:hover {
+  background: #3d8ae5;
+  transform: scale(1.05);
+}
+
+.modal-buttons button:last-child {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.modal-buttons button:last-child:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+

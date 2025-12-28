@@ -25,6 +25,7 @@ interface TokenCardProps {
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent, tokenId: string) => void;
   onDragEnd?: () => void;
+  onStateChange?: (tokenId: string, stateName: string | undefined) => void;
 }
 
 export default function TokenCard({
@@ -47,7 +48,8 @@ export default function TokenCard({
   onDragEnter,
   onDragOver,
   onDrop,
-  onDragEnd
+  onDragEnd,
+  onStateChange
 }: TokenCardProps) {
   const isCurrentTurn = currentActorId === token.id;
   const isDragging = draggedActorId === token.id;
@@ -114,33 +116,60 @@ export default function TokenCard({
                     </label>
                   )}
                   <div className="actor-name">{token.actor.name || 'Unnamed'}</div>
+                  {currentActorId && (
+                    editingField?.tokenId === token.id && editingField?.field === 'initiative' ? (
+                      <input
+                        type="number"
+                        className="initiative-input"
+                        value={editValue}
+                        onChange={(e) => onEditValueChange?.(e.target.value)}
+                        onBlur={onSaveEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') onSaveEdit?.();
+                          if (e.key === 'Escape') onCancelEdit?.();
+                        }}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <div 
+                        className="initiative-badge" 
+                        onClick={isGMView && onStartEditing ? (e) => {
+                          e.stopPropagation();
+                          onStartEditing(token.id, 'initiative', token.actor!.initiative);
+                        } : undefined}
+                        title={isGMView ? "Click to edit initiative" : undefined}
+                        style={{ cursor: isGMView ? 'pointer' : 'default' }}
+                      >
+                        {token.actor.initiative}
+                      </div>
+                    )
+                  )}
                 </div>
-                {editingField?.tokenId === token.id && editingField?.field === 'initiative' ? (
-                  <input
-                    type="number"
-                    className="initiative-input"
-                    value={editValue}
-                    onChange={(e) => onEditValueChange?.(e.target.value)}
-                    onBlur={onSaveEdit}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') onSaveEdit?.();
-                      if (e.key === 'Escape') onCancelEdit?.();
-                    }}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <div 
-                    className="initiative-badge" 
-                    onClick={isGMView && onStartEditing ? (e) => {
+                {isGMView && token.states && token.states.length > 0 && onStateChange && (
+                  <select
+                    value={token.activeState || ''}
+                    onChange={(e) => {
                       e.stopPropagation();
-                      onStartEditing(token.id, 'initiative', token.actor!.initiative);
-                    } : undefined}
-                    title={isGMView ? "Click to edit initiative" : undefined}
-                    style={{ cursor: isGMView ? 'pointer' : 'default' }}
+                      onStateChange(token.id, e.target.value || undefined);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      width: '100%',
+                      padding: '2px 4px',
+                      marginTop: '4px',
+                      background: '#2a2a2a',
+                      color: 'white',
+                      border: '1px solid #444',
+                      borderRadius: '3px',
+                      fontSize: '11px'
+                    }}
                   >
-                    {token.actor.initiative}
-                  </div>
+                    <option value="">Default</option>
+                    {token.states.map(state => (
+                      <option key={state.name} value={state.name}>{state.name}</option>
+                    ))}
+                  </select>
                 )}
               </div>
               <div className="actor-stats">

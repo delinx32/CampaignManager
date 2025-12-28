@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import ImageUploader from './ImageUploader'
 import MapCanvas from './MapCanvas'
+import AppHeader from './AppHeader'
 import { API_URL } from '../config'
 import '../App.css'
 
@@ -14,6 +15,7 @@ export default function GMView() {
   const { campaignName, scenarioName } = useParams<{ campaignName: string; scenarioName: string }>();
   const navigate = useNavigate();
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null)
+  const [campaignBackgroundImage, setCampaignBackgroundImage] = useState<string | undefined>(undefined);
   const [availableMaps, setAvailableMaps] = useState<MapFile[]>([])
   const [isCheckingExistingMap, setIsCheckingExistingMap] = useState(true);
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -27,8 +29,8 @@ export default function GMView() {
     const loadSessions = async () => {
       try {
         const [sessionsResponse, metadataResponse] = await Promise.all([
-          fetch(`${API_URL}/api/sessions`),
-          fetch(`${API_URL}/api/scenario-metadata`)
+          fetch(`${API_URL}/api/sessions`, { credentials: 'include' }),
+          fetch(`${API_URL}/api/scenario-metadata`, { credentials: 'include' })
         ]);
         
         if (sessionsResponse.ok) {
@@ -50,11 +52,30 @@ export default function GMView() {
     loadSessions();
   }, []);
 
+  // Load campaign background image
+  useEffect(() => {
+    const loadCampaignImage = async () => {
+      if (!campaignName) return;
+      try {
+        const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName)}/scenarios`, {
+          credentials: 'include'
+        });
+        const data = await response.json();
+        setCampaignBackgroundImage(data.campaignBackgroundImage);
+      } catch (error) {
+        console.error('Failed to load campaign image:', error);
+      }
+    };
+    loadCampaignImage();
+  }, [campaignName]);
+
   // Check session status on mount
   useEffect(() => {
     const checkSessionStatus = async () => {
       try {
-        const response = await fetch(`${API_URL}/api/session/status`);
+        const response = await fetch(`${API_URL}/api/session/status`, {
+          credentials: 'include'
+        });
         if (response.ok) {
           const data = await response.json();
           setIsSessionActive(data.isSessionActive);
@@ -84,6 +105,7 @@ export default function GMView() {
       const response = await fetch(`${API_URL}/api/session/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ sessionName })
       });
       
@@ -91,8 +113,12 @@ export default function GMView() {
         const data = await response.json();
         setIsSessionActive(data.isSessionActive);
         setCurrentSessionName(data.sessionName);
-        // Reload the page to refresh game state
-        window.location.reload();
+        // Refresh sessions list to include the new session
+        const sessionsResponse = await fetch(`${API_URL}/api/sessions`, { credentials: 'include' });
+        if (sessionsResponse.ok) {
+          const sessionsData = await sessionsResponse.json();
+          setAvailableSessions(sessionsData.sessions || []);
+        }
       } else {
         const error = await response.json();
         alert(`Failed to start session: ${error.error}`);
@@ -114,15 +140,16 @@ export default function GMView() {
     try {
       const response = await fetch(`${API_URL}/api/session/end`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
       
       if (response.ok) {
         const data = await response.json();
         setIsSessionActive(data.isSessionActive);
         setCurrentSessionName(null);
-        // Reload the page to refresh game state
-        window.location.reload();
+        // Reset to 'new' session option
+        setSelectedSession('new');
       } else {
         const error = await response.json();
         alert(`Failed to end session: ${error.error}`);
@@ -135,18 +162,49 @@ export default function GMView() {
     }
   };
 
+  // Set backend context when component mounts
+  useEffect(() => {
+    const setContext = async () => {
+      if (!campaignName || !scenarioName) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/set-context`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ 
+            campaign: campaignName, 
+            scenario: scenarioName 
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('Failed to set context:', errorData.error);
+        }
+      } catch (err) {
+        console.error('Failed to set context:', err);
+      }
+    };
+    setContext();
+  }, [campaignName, scenarioName]);
+
   // Check for existing game state on mount
   useEffect(() => {
     const checkExistingMap = async () => {
+      if (!campaignName || !scenarioName) return;
+      
       try {
-        const response = await fetch(`${API_URL}/api/scenario-maps`);
+        const response = await fetch(`${API_URL}/api/scenario-maps`, {
+          credentials: 'include'
+        });
         if (response.ok) {
           const data = await response.json();
           
-          if (data.hasExistingMap && data.mapFilename) {
+          if (data.hasExistingMap && data.backgroundImage) {
             // Auto-load the existing map
-            console.log('Found existing map, auto-loading:', data.mapFilename);
-            setBackgroundImage(`${API_URL}/images/maps/${data.mapFilename}`);
+            console.log('Found existing map, auto-loading:', data.backgroundImage);
+            setBackgroundImage(`${API_URL}${data.backgroundImage}`);
           }
         }
       } catch (error) {
@@ -156,12 +214,16 @@ export default function GMView() {
       }
     };
 
-    checkExistingMap();
+    // Wait a bit for context to be set
+    const timer = setTimeout(checkExistingMap, 100);
+    return () => clearTimeout(timer);
   }, [campaignName, scenarioName]);
 
   const fetchAvailableMaps = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/maps`);
+      const response = await fetch(`${API_URL}/api/maps`, {
+        credentials: 'include'
+      });
       const data = await response.json();
       setAvailableMaps(data.maps);
     } catch (error) {
@@ -189,7 +251,14 @@ export default function GMView() {
 
   return (
     <div className="app">
-      <header className="app-header">
+      <AppHeader 
+        title={`${campaignName} (GM)`}
+        campaignImage={campaignBackgroundImage}
+        subtitle={scenarioName}
+        campaignName={campaignName}
+        scenarioName={scenarioName}
+      />
+      <header className="gm-controls">
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
           <button
             onClick={() => navigate('/')}
@@ -240,8 +309,6 @@ export default function GMView() {
             ← Scenarios ({campaignName})
           </button>
         </div>
-        <h1>D&D Campaign Manager - GM View</h1>
-        <p>{campaignName} - {scenarioName}</p>
         
         <div style={{ marginTop: '10px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           {isSessionActive ? (
@@ -329,7 +396,7 @@ export default function GMView() {
           {isSessionActive && (
             <>
               <a 
-                href={`/${encodeURIComponent(currentSessionName || '')}/observer`}
+                href={`/${encodeURIComponent(campaignName || '')}/${encodeURIComponent(currentSessionName || '')}/observer`}
                 target="_blank" 
                 rel="noopener noreferrer"
                 style={{
@@ -345,7 +412,7 @@ export default function GMView() {
                 👁️ Observer View
               </a>
               <a 
-                href={`/${encodeURIComponent(currentSessionName || '')}/player`}
+                href={`/${encodeURIComponent(campaignName || '')}/${encodeURIComponent(currentSessionName || '')}/player`}
                 target="_blank" 
                 rel="noopener noreferrer"
                 style={{
@@ -364,6 +431,7 @@ export default function GMView() {
           )}
         </div>
       </header>
+      
       <main 
         className="app-main"
         onDrop={(e) => {

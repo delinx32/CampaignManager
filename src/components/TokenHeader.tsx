@@ -1,5 +1,6 @@
 import './TokenHeader.css';
 import type { Token } from '../types';
+import { API_URL } from '../config';
 
 interface TokenHeaderProps {
   token: Token & {
@@ -18,10 +19,15 @@ interface TokenHeaderProps {
 }
 
 export default function TokenHeader({ token, isCurrentTurn, onInitiativeClick, onHPClick, onEdit }: TokenHeaderProps) {
+  const getImageUrl = (url?: string) => {
+    if (!url) return '';
+    return url.startsWith('http') ? url : `${API_URL}${url}`;
+  };
+
   return (
     <div className="token-header">
       <div className="token-header-image">
-        <img src={token.portraitUrl || token.imageUrl} alt={token.name} />
+        <img src={getImageUrl(token.portraitUrl || token.imageUrl)} alt={token.name} />
       </div>
       
       <div className="token-header-content">

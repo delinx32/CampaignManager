@@ -24,6 +24,7 @@ dist-ssr
 *.sw?
 
 # API keys and secrets
+.env
 server/settings.json
 
 # User data - campaigns and uploaded images
@@ -31,5 +32,7 @@ server/campaigns/
 server/archived-campaigns/
 server/images/
 
+# User authentication data and sessions
+server/users/
 # Game state
 server/game-state.json

@@ -1,3 +1,12 @@
 {
-  "openaiApiKey": "your-openai-api-key-here"
+  "googleSearchApiKey": "your-google-api-key-here",
+  "googleSearchEngineId": "your-search-engine-id-here",
+  "oauth": {
+    "google": {
+      "clientId": "your-google-oauth-client-id-here",
+      "clientSecret": "your-google-oauth-client-secret-here",
+      "callbackURL": "http://localhost:3001/auth/google/callback"
+    }
+  },
+  "sessionSecret": "your-random-session-secret-here-change-in-production"
 }

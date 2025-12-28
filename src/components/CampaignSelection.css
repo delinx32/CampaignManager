@@ -1,27 +1,11 @@
 .campaign-selection {
   min-height: 100vh;
-  padding: 2rem;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   color: #fff;
 }
 
-.header {
-  text-align: center;
-  margin-bottom: 3rem;
-}
-
-.header h1 {
-  font-size: 3rem;
-  margin-bottom: 0.5rem;
-  background: linear-gradient(to right, #4da6ff, #7b68ee);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.subtitle {
-  font-size: 1.2rem;
-  color: #a0a0a0;
+.campaign-content {
+  padding: 0 2rem 2rem 2rem;
 }
 
 .loading {
@@ -63,7 +47,7 @@
 }
 
 .campaign-card {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.1);
   border: 2px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   padding: 2rem;
@@ -76,22 +60,20 @@
   align-items: center;
   text-align: center;
   position: relative;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .campaign-card:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.5);
   border-color: #4da6ff;
   transform: translateY(-4px);
   box-shadow: 0 8px 24px rgba(77, 166, 255, 0.3);
 }
 
 .delete-button {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  background: rgba(220, 53, 69, 0.2);
-  border: 1px solid rgba(220, 53, 69, 0.4);
-  color: #ff6b6b;
+  border: 1px solid rgba(220, 53, 69, 1);
   width: 28px;
   height: 28px;
   border-radius: 6px;
@@ -100,19 +82,12 @@
   align-items: center;
   justify-content: center;
   font-size: 0.9rem;
-  opacity: 0;
   transition: all 0.2s ease;
   padding: 0;
-  z-index: 10;
 }
 
 .rename-button {
-  position: absolute;
-  top: 0.75rem;
-  right: 6.25rem;
-  background: rgba(123, 104, 238, 0.2);
-  border: 1px solid rgba(123, 104, 238, 0.4);
-  color: #7b68ee;
+  border: 1px solid rgba(123, 104, 238, 1);
   width: 28px;
   height: 28px;
   border-radius: 6px;
@@ -121,19 +96,12 @@
   align-items: center;
   justify-content: center;
   font-size: 1.1rem;
-  opacity: 0;
   transition: all 0.2s ease;
   padding: 0;
-  z-index: 10;
 }
 
 .edit-button {
-  position: absolute;
-  top: 0.75rem;
-  right: 3.5rem;
-  background: rgba(77, 166, 255, 0.2);
-  border: 1px solid rgba(77, 166, 255, 0.4);
-  color: #4da6ff;
+  border: 1px solid rgba(77, 166, 255, 1);
   width: 28px;
   height: 28px;
   border-radius: 6px;
@@ -142,33 +110,41 @@
   align-items: center;
   justify-content: center;
   font-size: 1rem;
-  opacity: 0;
   transition: all 0.2s ease;
   padding: 0;
-  z-index: 10;
 }
 
-.campaign-card:hover .delete-button,
-.campaign-card:hover .edit-button,
-.campaign-card:hover .rename-button {
-  opacity: 1;
+.image-button {
+  border: 1px solid rgba(255, 193, 7, 1);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+  padding: 0;
 }
 
 .delete-button:hover {
-  background: rgba(220, 53, 69, 0.4);
   border-color: #dc3545;
   transform: scale(1.1);
 }
 
 .rename-button:hover {
-  background: rgba(123, 104, 238, 0.4);
   border-color: #7b68ee;
   transform: scale(1.1);
 }
 
 .edit-button:hover {
-  background: rgba(77, 166, 255, 0.4);
   border-color: #4da6ff;
+  transform: scale(1.1);
+}
+
+.image-button:hover {
+  border-color: #ffc107;
   transform: scale(1.1);
 }
 
@@ -185,6 +161,51 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.image-editor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 1.5rem;
+  border-radius: 8px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.image-editor h3 {
+  margin: 0 0 1rem 0;
+  color: #fff;
+  font-size: 1.25rem;
+}
+
+.image-editor button {
+  margin-top: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: #4da6ff;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.image-editor button:hover {
+  background: #3d8fd9;
+}
+
+.campaign-name {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #fff;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+  position: relative;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
 }
 
 .edit-input,
@@ -567,4 +588,40 @@
 
 .confirm-button.danger:hover {
   background: #a02430;
+}
+
+.campaign-card-buttons {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.5rem;
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+}
+
+.campaign-card:hover .campaign-card-buttons {
+  opacity: 1;
+}
+
+.campaign-card-content {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1rem;
+  border-radius: 8px;
+  width: 100%;
+}
+
+.campaign-card-content .campaign-name {
+  background: transparent;
+}
+
+.campaign-card-content .campaign-description,
+.campaign-card-content .scenario-count,
+.campaign-card-content .campaign-action {
+  position: relative;
+  z-index: 1;
 }

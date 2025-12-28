@@ -1,21 +1,28 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_URL } from '../config';
+import ImagePicker from './ImagePicker';
+import AIImageGenerator from './AIImageGenerator';
+import AppHeader from './AppHeader';
 import './CampaignSelection.css';
 
-interface Campaign {
+interface Campaign
+{
   name: string;
   scenarioCount: number;
   description?: string;
+  backgroundImage?: string;
 }
 
-interface ArchivedCampaign {
+interface ArchivedCampaign
+{
   folderName: string;
   originalName: string;
   archivedAt: string;
 }
 
-function CampaignSelection() {
+function CampaignSelection()
+{
   const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [archivedCampaigns, setArchivedCampaigns] = useState<ArchivedCampaign[]>([]);
@@ -27,227 +34,373 @@ function CampaignSelection() {
   const [campaignToDelete, setCampaignToDelete] = useState<string | null>(null);
   const [archivedToDelete, setArchivedToDelete] = useState<string | null>(null);
   const [editingCampaign, setEditingCampaign] = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [renamingCampaign, setRenamingCampaign] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  const [editingImage, setEditingImage] = useState<string | null>(null);
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [showAIGenerator, setShowAIGenerator] = useState(false);
 
-  useEffect(() => {
+  useEffect(() =>
+  {
     loadCampaigns();
     loadArchivedCampaigns();
   }, []);
 
-  const loadCampaigns = async () => {
-    try {
+  const loadCampaigns = async () =>
+  {
+    try
+    {
       setLoading(true);
-      const response = await fetch(`${API_URL}/api/campaigns`);
+      const response = await fetch(`${API_URL}/api/campaigns`, {
+        credentials: 'include'
+      });
       const data = await response.json();
       console.log('Campaigns data:', data);
       setCampaigns(data.campaigns || []);
       setError(null);
-    } catch (err) {
+    } catch (err)
+    {
       setError('Failed to load campaigns');
       console.error('Error loading campaigns:', err);
-    } finally {
+    } finally
+    {
       setLoading(false);
     }
   };
 
-  const loadArchivedCampaigns = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/archived-campaigns`);
+  const loadArchivedCampaigns = async () =>
+  {
+    try
+    {
+      const response = await fetch(`${API_URL}/api/archived-campaigns`, {
+        credentials: 'include'
+      });
       const data = await response.json();
       setArchivedCampaigns(data.archived || []);
-    } catch (err) {
+    } catch (err)
+    {
       console.error('Error loading archived campaigns:', err);
     }
   };
 
-  const handleRestore = async (folderName: string) => {
-    try {
+  const handleRestore = async (folderName: string) =>
+  {
+    try
+    {
       const response = await fetch(`${API_URL}/api/archived-campaigns/${encodeURIComponent(folderName)}/restore`, {
-        method: 'POST'
+        method: 'POST',
+        credentials: 'include'
       });
-      
-      if (response.ok) {
+
+      if (response.ok)
+      {
         loadCampaigns();
         loadArchivedCampaigns();
-      } else {
+      } else
+      {
         const data = await response.json();
         setError(data.error || 'Failed to restore campaign');
       }
-    } catch (err) {
+    } catch (err)
+    {
       setError('Failed to restore campaign');
       console.error('Error restoring campaign:', err);
     }
   };
 
-  const handlePermanentDelete = (folderName: string) => {
+  const handlePermanentDelete = (folderName: string) =>
+  {
     setArchivedToDelete(folderName);
   };
 
-  const confirmPermanentDelete = async () => {
+  const confirmPermanentDelete = async () =>
+  {
     if (!archivedToDelete) return;
-    
-    try {
+
+    try
+    {
       const response = await fetch(`${API_URL}/api/archived-campaigns/${encodeURIComponent(archivedToDelete)}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       });
-      
-      if (response.ok) {
+
+      if (response.ok)
+      {
         setArchivedToDelete(null);
         loadArchivedCampaigns();
-      } else {
+      } else
+      {
         const data = await response.json();
         setError(data.error || 'Failed to delete campaign');
         setArchivedToDelete(null);
       }
-    } catch (err) {
+    } catch (err)
+    {
       setError('Failed to delete campaign');
       console.error('Error deleting campaign:', err);
       setArchivedToDelete(null);
     }
   };
 
-  const handleEdit = (campaign: Campaign, e: React.MouseEvent) => {
+  const handleEdit = (campaign: Campaign, e: React.MouseEvent) =>
+  {
     e.stopPropagation();
     setEditingCampaign(campaign.name);
-    setEditName(campaign.name);
     setEditDescription(campaign.description || '');
   };
 
-  const handleSaveEdit = async (originalName: string, e: React.MouseEvent) => {
+  const handleSaveEdit = async (originalName: string, e: React.MouseEvent) =>
+  {
     e.stopPropagation();
-    
-    try {
+
+    try
+    {
       const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(originalName)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           description: editDescription.trim()
         })
       });
-      
-      if (response.ok) {
+
+      if (response.ok)
+      {
         setEditingCampaign(null);
         loadCampaigns();
-      } else {
+      } else
+      {
         const data = await response.json();
         setError(data.error || 'Failed to update campaign');
       }
-    } catch (err) {
+    } catch (err)
+    {
       setError('Failed to update campaign');
       console.error('Error updating campaign:', err);
     }
   };
 
-  const handleCancelEdit = (e: React.MouseEvent) => {
+  const handleCancelEdit = (e: React.MouseEvent) =>
+  {
     e.stopPropagation();
     setEditingCampaign(null);
-    setEditName('');
     setEditDescription('');
   };
 
-  const handleRename = (campaignName: string, e: React.MouseEvent) => {
+  const handleEditImage = (campaign: Campaign, e: React.MouseEvent) =>
+  {
+    e.stopPropagation();
+    setEditingImage(campaign.name);
+    setSelectedImageFile(null);
+    // Pre-fill with existing background image if available
+    setSelectedImageUrl(campaign.backgroundImage ? `${API_URL}${campaign.backgroundImage}` : null);
+  };
+
+  const handleImageFileSelect = (file: File) =>
+  {
+    setSelectedImageFile(file);
+    setSelectedImageUrl(null);
+  };
+
+  const handleImageUrlSelect = (url: string) =>
+  {
+    setSelectedImageUrl(url);
+    setSelectedImageFile(null);
+  };
+
+  const handleSaveImage = async (e: React.MouseEvent) =>
+  {
+    e.stopPropagation();
+    if (!editingImage) return;
+
+    try
+    {
+      let imageUrl = selectedImageUrl;
+
+      // If a file was selected, upload it first
+      if (selectedImageFile)
+      {
+        const formData = new FormData();
+        formData.append('image', selectedImageFile);
+        formData.append('type', 'misc');
+
+        const uploadResponse = await fetch(`${API_URL}/api/upload`, {
+          method: 'POST',
+          credentials: 'include',
+          body: formData
+        });
+
+        if (!uploadResponse.ok)
+        {
+          throw new Error('Failed to upload image');
+        }
+
+        const uploadData = await uploadResponse.json();
+        imageUrl = uploadData.url;
+      }
+
+      // Update campaign metadata with the image URL
+      // Strip API_URL prefix if present to store relative path only
+      const relativeImageUrl = imageUrl?.replace(API_URL, '') || null;
+      
+      const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(editingImage)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ backgroundImage: relativeImageUrl })
+      });
+
+      if (response.ok)
+      {
+        setEditingImage(null);
+        setSelectedImageFile(null);
+        setSelectedImageUrl(null);
+        loadCampaigns();
+      } else
+      {
+        const data = await response.json();
+        setError(data.error || 'Failed to update campaign image');
+      }
+    } catch (err)
+    {
+      setError('Failed to update campaign image');
+      console.error('Error updating campaign image:', err);
+    }
+  };
+
+  const handleCancelImageEdit = (e: React.MouseEvent) =>
+  {
+    e.stopPropagation();
+    setEditingImage(null);
+    setSelectedImageFile(null);
+    setSelectedImageUrl(null);
+  };
+
+  const handleRename = (campaignName: string, e: React.MouseEvent) =>
+  {
     e.stopPropagation();
     setRenamingCampaign(campaignName);
     setNewName(campaignName);
   };
 
-  const confirmRename = async () => {
+  const confirmRename = async () =>
+  {
     if (!renamingCampaign || !newName.trim()) return;
-    
-    if (newName.trim() === renamingCampaign) {
+
+    if (newName.trim() === renamingCampaign)
+    {
       setRenamingCampaign(null);
       return;
     }
-    
-    try {
+
+    try
+    {
       const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(renamingCampaign)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ name: newName.trim() })
       });
-      
-      if (response.ok) {
+
+      if (response.ok)
+      {
         setRenamingCampaign(null);
         setNewName('');
         loadCampaigns();
-      } else {
+      } else
+      {
         const data = await response.json();
         setError(data.error || 'Failed to rename campaign');
         setRenamingCampaign(null);
       }
-    } catch (err) {
+    } catch (err)
+    {
       setError('Failed to rename campaign');
       console.error('Error renaming campaign:', err);
       setRenamingCampaign(null);
     }
   };
 
-  const handleCreateCampaign = async (e: React.FormEvent) => {
+  const handleCreateCampaign = async (e: React.FormEvent) =>
+  {
     e.preventDefault();
-    
-    if (!newCampaignName.trim()) {
+
+    if (!newCampaignName.trim())
+    {
       setError('Campaign name cannot be empty');
       return;
     }
 
-    try {
+    try
+    {
       const response = await fetch(`${API_URL}/api/campaigns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ name: newCampaignName.trim() })
       });
 
-      if (response.ok) {
+      if (response.ok)
+      {
         setNewCampaignName('');
         setShowCreateForm(false);
         loadCampaigns();
-      } else {
+      } else
+      {
         const data = await response.json();
         setError(data.error || 'Failed to create campaign');
       }
-    } catch (err) {
+    } catch (err)
+    {
       setError('Failed to create campaign');
       console.error('Error creating campaign:', err);
     }
   };
 
-  const handleSelectCampaign = (campaignName: string) => {
+  const handleSelectCampaign = (campaignName: string) =>
+  {
     navigate(`/campaign/${encodeURIComponent(campaignName)}`);
   };
 
-  const handleDeleteCampaign = (campaignName: string, e: React.MouseEvent) => {
+  const handleDeleteCampaign = (campaignName: string, e: React.MouseEvent) =>
+  {
     e.stopPropagation(); // Prevent card click
     setCampaignToDelete(campaignName);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = async () =>
+  {
     if (!campaignToDelete) return;
-    
-    try {
+
+    try
+    {
       const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignToDelete)}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       });
-      
-      if (response.ok) {
+
+      if (response.ok)
+      {
         setCampaignToDelete(null);
         loadCampaigns();
         loadArchivedCampaigns(); // Reload archived list
-      } else {
+      } else
+      {
         const data = await response.json();
         setError(data.error || 'Failed to archive campaign');
         setCampaignToDelete(null);
       }
-    } catch (err) {
+    } catch (err)
+    {
       setError('Failed to archive campaign');
       console.error('Error archiving campaign:', err);
       setCampaignToDelete(null);
     }
   };
 
-  if (loading) {
+  if (loading)
+  {
     return (
       <div className="campaign-selection">
         <div className="loading">Loading campaigns...</div>
@@ -257,11 +410,12 @@ function CampaignSelection() {
 
   return (
     <div className="campaign-selection">
-      <div className="header">
-        <h1>Campaign Manager</h1>
-        <p className="subtitle">Select a campaign to continue</p>
-      </div>
-
+      <AppHeader 
+        title="Campaign Manager" 
+        subtitle="Select a campaign to continue" 
+      />
+      
+      <div className="campaign-content">
       {error && (
         <div className="error-message">
           {error}
@@ -274,7 +428,14 @@ function CampaignSelection() {
           <div
             key={campaign.name}
             className="campaign-card"
-            onClick={() => editingCampaign !== campaign.name && handleSelectCampaign(campaign.name)}
+            style={{
+              backgroundImage: campaign.backgroundImage 
+                ? `url(${campaign.backgroundImage.startsWith('http') ? campaign.backgroundImage : `${API_URL}${campaign.backgroundImage}`})` 
+                : undefined,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center'
+            }}
+            onClick={() => !editingCampaign && handleSelectCampaign(campaign.name)}
           >
             {editingCampaign === campaign.name ? (
               <>
@@ -301,35 +462,46 @@ function CampaignSelection() {
               </>
             ) : (
               <>
-                <button 
-                  className="delete-button"
-                  onClick={(e) => handleDeleteCampaign(campaign.name, e)}
-                  title="Archive campaign"
-                >
-                  ✕
-                </button>
-                <button 
-                  className="rename-button"
-                  onClick={(e) => handleRename(campaign.name, e)}
-                  title="Rename campaign"
-                >
-                  ✎
-                </button>
-                <button 
-                  className="edit-button"
-                  onClick={(e) => handleEdit(campaign, e)}
-                  title="Edit campaign"
-                >
-                  📝
-                </button>
-                <h3>{campaign.name}</h3>
-                {campaign.description && (
-                  <p className="campaign-description">{campaign.description}</p>
-                )}
-                <p className="scenario-count">
-                  {campaign.scenarioCount} scenario{campaign.scenarioCount !== 1 ? 's' : ''}
-                </p>
-                <p className="campaign-action">View scenarios</p>
+                <div className="campaign-card-buttons">
+                  <button
+                    className="image-button"
+                    onClick={(e) => handleEditImage(campaign, e)}
+                    title="Set background image"
+                  >
+                    🖼️
+                  </button>
+                  <button
+                    className="delete-button"
+                    onClick={(e) => handleDeleteCampaign(campaign.name, e)}
+                    title="Archive campaign"
+                  >
+                    🗑️
+                  </button>
+                  <button
+                    className="rename-button"
+                    onClick={(e) => handleRename(campaign.name, e)}
+                    title="Rename campaign"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="edit-button"
+                    onClick={(e) => handleEdit(campaign, e)}
+                    title="Edit campaign"
+                  >
+                    📝
+                  </button>
+                </div>
+                <div className="campaign-card-content">
+                  <h2 className="campaign-name">{campaign.name}</h2>
+                  {campaign.description && (
+                    <p className="campaign-description">{campaign.description}</p>
+                  )}
+                  <p className="scenario-count">
+                    {campaign.scenarioCount} scenario{campaign.scenarioCount !== 1 ? 's' : ''}
+                  </p>
+                  <p className="campaign-action">View scenarios</p>
+                </div>
               </>
             )}
           </div>
@@ -361,7 +533,8 @@ function CampaignSelection() {
               <button type="submit">Create</button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={() =>
+                {
                   setShowCreateForm(false);
                   setNewCampaignName('');
                   setError(null);
@@ -376,13 +549,13 @@ function CampaignSelection() {
 
       {archivedCampaigns.length > 0 && (
         <div className="archived-section">
-          <button 
+          <button
             className="archived-toggle"
             onClick={() => setShowArchived(!showArchived)}
           >
             {showArchived ? '▼' : '▶'} Archived Campaigns ({archivedCampaigns.length})
           </button>
-          
+
           {showArchived && (
             <div className="archived-list">
               {archivedCampaigns.map((archived) => (
@@ -457,8 +630,8 @@ function CampaignSelection() {
               autoFocus
             />
             <div className="confirmation-actions">
-              <button 
-                onClick={confirmRename} 
+              <button
+                onClick={confirmRename}
                 className="confirm-button"
               >
                 Rename
@@ -468,6 +641,44 @@ function CampaignSelection() {
           </div>
         </div>
       )}
+
+      {editingImage && (
+        <div className="confirmation-overlay" onClick={handleCancelImageEdit}>
+          <div className="confirmation-dialog image-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Set Background Image</h3>
+            <ImagePicker
+              label="Campaign Background"
+              imagePreview={selectedImageFile ? URL.createObjectURL(selectedImageFile) : selectedImageUrl}
+              selectedUrl={selectedImageUrl}
+              folder="misc"
+              onFileSelect={handleImageFileSelect}
+              onUrlSelect={handleImageUrlSelect}
+              onAIGenerate={() => setShowAIGenerator(true)}
+              aiGenerateLabel="Generate with AI"
+            />
+            <div className="confirmation-actions">
+              <button onClick={handleSaveImage} className="confirm-button">Save Image</button>
+              <button onClick={handleCancelImageEdit} className="cancel-button">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAIGenerator && (
+        <div className="confirmation-overlay" onClick={() => setShowAIGenerator(false)}>
+          <div className="confirmation-dialog ai-generator-dialog" onClick={(e) => e.stopPropagation()}>
+            <AIImageGenerator
+              promptTemplate="misc"
+              onImageGenerated={(_url, file) => {
+                handleImageFileSelect(file);
+                setShowAIGenerator(false);
+              }}
+              onClose={() => setShowAIGenerator(false)}
+            />
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import TokenCreator from './TokenCreator';
 import TokenHeader from './TokenHeader';
+import AppHeader from './AppHeader';
 import { API_URL } from '../config';
 import type { Actor, Token } from '../types';
 import './PlayerView.css';
@@ -12,8 +13,8 @@ interface GameState {
 }
 
 export default function PlayerView() {
-  // Get session parameter from route
-  const { session: sessionName } = useParams<{ session: string }>();
+  // Get campaign and session parameters from route
+  const { campaignName, sessionName } = useParams<{ campaignName: string; sessionName: string }>();
 
   const [gameState, setGameState] = useState<GameState>({
     tokens: [],
@@ -31,7 +32,7 @@ export default function PlayerView() {
   // Send heartbeat to keep player active
   useEffect(() => {
     console.log('Heartbeat useEffect triggered, selectedTokenId:', selectedTokenId);
-    if (!selectedTokenId) return;
+    if (!selectedTokenId || !campaignName || !sessionName) return;
 
     const sendHeartbeat = async () => {
       try {
@@ -57,8 +58,8 @@ export default function PlayerView() {
   useEffect(() => {
     const updateGameState = async () => {
       try {
-        const url = sessionName 
-          ? `${API_URL}/api/game-state?session=${encodeURIComponent(sessionName)}`
+        const url = (campaignName && sessionName)
+          ? `${API_URL}/api/game-state?campaign=${encodeURIComponent(campaignName)}&session=${encodeURIComponent(sessionName)}`
           : `${API_URL}/api/game-state`;
         const response = await fetch(url);
         if (response.ok) {
@@ -89,7 +90,7 @@ export default function PlayerView() {
     const interval = setInterval(updateGameState, 1000);
 
     return () => clearInterval(interval);
-  }, [sessionName]);
+  }, [campaignName, sessionName]);
 
   const handleCreateToken = async (actor: Actor, imageFile: File | null, color: string, actorUrl?: string) => {
     let imageUrl = actorUrl || '';
@@ -222,6 +223,7 @@ export default function PlayerView() {
 
   return (
     <>
+      <AppHeader title={`Player View - ${campaignName} / ${sessionName}`} />
       {showTokenModal && (
         <div className="token-select-modal">
           <div className="token-select-content">

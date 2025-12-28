@@ -1,18 +1,28 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { API_URL } from '../config';
+import AppHeader from './AppHeader';
 import './ScenarioSelection.css';
 
 interface Scenario {
   name: string;
   mapCount: number;
   description?: string;
+  mapImageUrl?: string;
+}
+
+interface ArchivedScenario {
+  folderName: string;
+  originalName: string;
+  archivedAt: string;
 }
 
 function ScenarioSelection() {
   const navigate = useNavigate();
   const { campaignName } = useParams<{ campaignName: string }>();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [archivedScenarios, setArchivedScenarios] = useState<ArchivedScenario[]>([]);
+  const [campaignBackgroundImage, setCampaignBackgroundImage] = useState<string | undefined>(undefined);
   const [newScenarioName, setNewScenarioName] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -21,25 +31,46 @@ function ScenarioSelection() {
   const [editDescription, setEditDescription] = useState('');
   const [renamingScenario, setRenamingScenario] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
+  const [scenarioToDelete, setScenarioToDelete] = useState<string | null>(null);
+  const [archivedToDelete, setArchivedToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     if (campaignName) {
       loadScenarios();
+      loadArchivedScenarios();
     }
   }, [campaignName]);
 
   const loadScenarios = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName!)}/scenarios`);
+      const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName!)}/scenarios`, {
+        credentials: 'include'
+      });
       const data = await response.json();
       setScenarios(data.scenarios || []);
+      setCampaignBackgroundImage(data.campaignBackgroundImage);
       setError(null);
     } catch (err) {
       setError('Failed to load scenarios');
       console.error('Error loading scenarios:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadArchivedScenarios = async () =>
+  {
+    try
+    {
+      const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName!)}/archived-scenarios`, {
+        credentials: 'include'
+      });
+      const data = await response.json();
+      setArchivedScenarios(data.archived || []);
+    } catch (err)
+    {
+      console.error('Error loading archived scenarios:', err);
     }
   };
 
@@ -55,6 +86,7 @@ function ScenarioSelection() {
       const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName!)}/scenarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ name: newScenarioName.trim() })
       });
 
@@ -78,6 +110,7 @@ function ScenarioSelection() {
       const response = await fetch(`${API_URL}/api/set-context`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ 
           campaign: campaignName, 
           scenario: scenarioName 
@@ -115,6 +148,7 @@ function ScenarioSelection() {
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ description: editDescription })
         }
       );
@@ -151,6 +185,7 @@ function ScenarioSelection() {
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ newName: newName.trim() })
         }
       );
@@ -169,6 +204,101 @@ function ScenarioSelection() {
     }
   };
 
+  const handleDeleteScenario = (scenarioName: string, e: React.MouseEvent) =>
+  {
+    e.stopPropagation();
+    setScenarioToDelete(scenarioName);
+  };
+
+  const confirmDelete = async () =>
+  {
+    if (!scenarioToDelete) return;
+
+    try
+    {
+      const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName!)}/scenarios/${encodeURIComponent(scenarioToDelete)}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      if (response.ok)
+      {
+        setScenarioToDelete(null);
+        loadScenarios();
+        loadArchivedScenarios();
+      } else
+      {
+        const data = await response.json();
+        setError(data.error || 'Failed to archive scenario');
+        setScenarioToDelete(null);
+      }
+    } catch (err)
+    {
+      setError('Failed to archive scenario');
+      console.error('Error archiving scenario:', err);
+      setScenarioToDelete(null);
+    }
+  };
+
+  const handleRestore = async (folderName: string) =>
+  {
+    try
+    {
+      const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName!)}/archived-scenarios/${encodeURIComponent(folderName)}/restore`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+
+      if (response.ok)
+      {
+        loadScenarios();
+        loadArchivedScenarios();
+      } else
+      {
+        const data = await response.json();
+        setError(data.error || 'Failed to restore scenario');
+      }
+    } catch (err)
+    {
+      setError('Failed to restore scenario');
+      console.error('Error restoring scenario:', err);
+    }
+  };
+
+  const handlePermanentDelete = (folderName: string) =>
+  {
+    setArchivedToDelete(folderName);
+  };
+
+  const confirmPermanentDelete = async () =>
+  {
+    if (!archivedToDelete) return;
+
+    try
+    {
+      const response = await fetch(`${API_URL}/api/campaigns/${encodeURIComponent(campaignName!)}/archived-scenarios/${encodeURIComponent(archivedToDelete)}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      if (response.ok)
+      {
+        setArchivedToDelete(null);
+        loadArchivedScenarios();
+      } else
+      {
+        const data = await response.json();
+        setError(data.error || 'Failed to delete scenario');
+        setArchivedToDelete(null);
+      }
+    } catch (err)
+    {
+      setError('Failed to delete scenario');
+      console.error('Error deleting scenario:', err);
+      setArchivedToDelete(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="scenario-selection">
@@ -179,13 +309,15 @@ function ScenarioSelection() {
 
   return (
     <div className="scenario-selection">
-      <div className="header">
+      <AppHeader 
+        title={campaignName || 'Campaign'} 
+        campaignImage={campaignBackgroundImage}
+        subtitle="Select a scenario to manage" 
+      />
+      <div className="scenario-content">
         <button className="back-button" onClick={handleBack}>
           ← Back to Campaigns
         </button>
-        <h1>{campaignName}</h1>
-        <p className="subtitle">Select a scenario to manage</p>
-      </div>
 
       {error && (
         <div className="error-message">
@@ -199,6 +331,13 @@ function ScenarioSelection() {
           <div
             key={scenario.name}
             className="scenario-card"
+            style={{
+              backgroundImage: scenario.mapImageUrl 
+                ? `url(${scenario.mapImageUrl.startsWith('http') ? scenario.mapImageUrl : `${API_URL}${scenario.mapImageUrl}`})` 
+                : undefined,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center'
+            }}
             onClick={() => editingScenario !== scenario.name && handleSelectScenario(scenario.name)}
           >
             {editingScenario === scenario.name ? (
@@ -234,20 +373,29 @@ function ScenarioSelection() {
               </form>
             ) : (
               <>
-                <button
-                  className="rename-button"
-                  onClick={(e) => handleRename(e, scenario)}
-                  title="Rename scenario"
-                >
-                  ✎
-                </button>
-                <button
-                  className="edit-button"
-                  onClick={(e) => handleEdit(e, scenario)}
-                  title="Edit description"
-                >
-                  📝
-                </button>
+                <div className="scenario-card-buttons">
+                  <button
+                    className="rename-button"
+                    onClick={(e) => handleRename(e, scenario)}
+                    title="Rename scenario"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="edit-button"
+                    onClick={(e) => handleEdit(e, scenario)}
+                    title="Edit description"
+                  >
+                    📝
+                  </button>
+                  <button
+                    className="delete-button"
+                    onClick={(e) => handleDeleteScenario(scenario.name, e)}
+                    title="Archive scenario"
+                  >
+                    🗑️
+                  </button>
+                </div>
                 <h3>{scenario.name}</h3>
                 {scenario.description && (
                   <p className="description">{scenario.description}</p>
@@ -319,6 +467,67 @@ function ScenarioSelection() {
           </div>
         </div>
       )}
+
+      {scenarioToDelete && (
+        <div className="modal-overlay" onClick={() => setScenarioToDelete(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Archive Scenario</h3>
+            <p>Are you sure you want to archive "{scenarioToDelete}"?</p>
+            <p className="confirmation-note">The scenario will be moved to archived-scenarios folder and can be restored later.</p>
+            <div className="modal-buttons">
+              <button onClick={confirmDelete} className="delete-confirm">Archive</button>
+              <button onClick={() => setScenarioToDelete(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {archivedScenarios.length > 0 && (
+        <div className="archived-section">
+          <h2>Archived Scenarios</h2>
+          <div className="archived-list">
+            {archivedScenarios.map((archived) => (
+              <div key={archived.folderName} className="archived-item">
+                <div className="archived-info">
+                  <strong>{archived.originalName}</strong>
+                  <span className="archived-date">
+                    Archived: {new Date(archived.archivedAt).toLocaleString()}
+                  </span>
+                </div>
+                <div className="archived-actions">
+                  <button
+                    className="restore-button"
+                    onClick={() => handleRestore(archived.folderName)}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    className="permanent-delete-button"
+                    onClick={() => handlePermanentDelete(archived.folderName)}
+                  >
+                    Permanently Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {archivedToDelete && (
+        <div className="modal-overlay" onClick={() => setArchivedToDelete(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Permanently Delete Scenario</h3>
+            <p>Are you sure you want to permanently delete this archived scenario?</p>
+            <p className="warning-note">This action cannot be undone!</p>
+            <div className="modal-buttons">
+              <button onClick={confirmPermanentDelete} className="delete-confirm">Delete Forever</button>
+              <button onClick={() => setArchivedToDelete(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 }

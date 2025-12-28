@@ -1,19 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { API_URL } from '../config';
-import type { Actor, Token } from '../types';
+import type { Actor, Token, ImageState } from '../types';
 import AIImageGenerator from './AIImageGenerator';
+import ImagePicker from './ImagePicker';
 
 interface TokenCreatorProps {
-  onCreateToken: (actor: Actor, imageFile: File | null, color: string, actorUrl?: string) => void;
-  onUpdateToken?: (tokenId: string, actor: Actor, imageFile: File | null, color: string, actorUrl?: string) => void;
+  onCreateToken: (actor: Actor, imageFile: File | null, color: string, actorUrl?: string, portraitFile?: File | null, portraitUrl?: string, states?: ImageState[], gridWidth?: number, gridHeight?: number, tags?: string) => void;
+  onUpdateToken?: (tokenId: string, actor: Actor, imageFile: File | null, color: string, actorUrl?: string, portraitFile?: File | null, portraitUrl?: string, states?: ImageState[], gridWidth?: number, gridHeight?: number, tags?: string) => void;
   editingToken?: Token | null;
   onCancel: () => void;
   defaultPlayerMode?: boolean;
-}
-
-interface ActorFile {
-  filename: string;
-  url: string;
 }
 
 export default function TokenCreator({ onCreateToken, onUpdateToken, editingToken, onCancel, defaultPlayerMode = false }: TokenCreatorProps) {
@@ -55,66 +51,59 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
   const [characterSheetUrl, setCharacterSheetUrl] = useState(editingToken?.actor?.characterSheetUrl || '');
   const [isPlayer, setIsPlayer] = useState(editingToken?.actor?.player || defaultPlayerMode);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(editingToken?.imageUrl || null);
-  const [availablePortraits, setAvailablePortraits] = useState<ActorFile[]>([]);
-  const [availableTokens, setAvailableTokens] = useState<ActorFile[]>([]);
-  const [selectedActorUrl, setSelectedActorUrl] = useState<string | null>(editingToken?.imageUrl || null);
+  const [flippingImage, setFlippingImage] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(
+    editingToken?.imageUrl 
+      ? (editingToken.imageUrl.startsWith('http') ? editingToken.imageUrl : `${API_URL}${editingToken.imageUrl}`)
+      : null
+  );
+  const [selectedActorUrl, setSelectedActorUrl] = useState<string | null>(
+    editingToken?.imageUrl 
+      ? (editingToken.imageUrl.startsWith('http') ? editingToken.imageUrl : `${API_URL}${editingToken.imageUrl}`)
+      : null
+  );
 
   // Portrait state
-  // const [portraitFile, setPortraitFile] = useState<File | null>(null);
-  const [portraitPreview, setPortraitPreview] = useState<string | null>(editingToken?.portraitUrl || null);
-  const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(editingToken?.portraitUrl || null);
+  const [portraitFile, setPortraitFile] = useState<File | null>(null);
+  const [portraitPreview, setPortraitPreview] = useState<string | null>(
+    editingToken?.portraitUrl 
+      ? (editingToken.portraitUrl.startsWith('http') ? editingToken.portraitUrl : `${API_URL}${editingToken.portraitUrl}`)
+      : null
+  );
+  const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(
+    editingToken?.portraitUrl 
+      ? (editingToken.portraitUrl.startsWith('http') ? editingToken.portraitUrl : `${API_URL}${editingToken.portraitUrl}`)
+      : null
+  );
   const [importingPortrait, setImportingPortrait] = useState(false);
+  const [states, setStates] = useState<ImageState[]>(editingToken?.states || []);
+  const [editingStateName, setEditingStateName] = useState<string>('');
+  const [generatingStateFor, setGeneratingStateFor] = useState<string | null>(null);
+  const [showStateImagePicker, setShowStateImagePicker] = useState<string | null>(null);
+  const [gridWidth, setGridWidth] = useState(editingToken?.gridWidth || 1);
+  const [gridHeight, setGridHeight] = useState(editingToken?.gridHeight || 1);
+  const [tags, setTags] = useState(editingToken?.tags || '');
+  const [editingStateTags, setEditingStateTags] = useState<string>('');
     // Portrait image upload handler
-    const handlePortraitChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        setSelectedPortraitUrl(null);
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          setPortraitPreview(e.target?.result as string);
-        };
-        reader.readAsDataURL(file);
-      }
+    const handlePortraitChange = (file: File) => {
+      setPortraitFile(file);
+      setSelectedPortraitUrl(null);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setPortraitPreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
     };
 
     // Portrait gallery select handler (reuse availableActors for now)
     const handlePortraitSelect = (url: string) => {
-      // Always treat as portrait image
-      let portraitUrl = url;
-      if (!url.includes('/images/actors/portrait/')) {
-        portraitUrl = url.replace('/images/actors/', '/images/actors/portrait/');
-      }
-      setSelectedPortraitUrl(portraitUrl);
-      setPortraitPreview(portraitUrl);
+      setSelectedPortraitUrl(url);
+      setPortraitPreview(url);
     };
   const [showAIGenerator, setShowAIGenerator] = useState(false);
   const [aiReferenceImages, setAIReferenceImages] = useState<File[]>([]);
   const [aiPromptTemplate, setAIPromptTemplate] = useState<string>('token');
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-
-  // Function to reload available actors (image gallery)
-  const reloadActors = () => {
-    fetch(`${API_URL}/api/actors`)
-      .then(res => res.json())
-      .then(data => {
-        const portraits = data.actors
-          .filter((a: ActorFile) => a.url.includes('/images/actors/portrait/'))
-          .map((actor: ActorFile) => ({ ...actor, url: `${API_URL}${actor.url}` }));
-
-        const tokens = data.actors
-          .filter((a: ActorFile) => a.url.includes('/images/actors/token/'))
-          .map((actor: ActorFile) => ({ ...actor, url: `${API_URL}${actor.url}` }));
-
-        setAvailablePortraits(portraits);
-        setAvailableTokens(tokens);
-      })
-      .catch(err => console.error('Failed to fetch actors:', err));
-  };
-
-  useEffect(() => {
-    reloadActors();
-  }, []);
 
   // Import portrait from character sheet URL using backend Puppeteer endpoint
   const importPortraitFromUrl = async (url: string) => {
@@ -165,7 +154,6 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
         setDescription(newDescription);
       }
       
-      reloadActors();
       console.log('Portrait imported successfully:', fullUrl);
     } catch (err) {
       console.error('Failed to import portrait:', err);
@@ -200,47 +188,174 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
         ctx.drawImage(img, 7, 7, 86, 86);
         ctx.restore();
       };
+      img.onerror = (e) => {
+        console.error('Failed to load image for preview:', imagePreview, e);
+      };
       img.src = imagePreview;
     }
   }, [color, imagePreview]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setImageFile(file);
-      setSelectedActorUrl(null);
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setImagePreview(e.target?.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+  const handleImageChange = (file: File) => {
+    setImageFile(file);
+    setSelectedActorUrl(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImagePreview(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleActorSelect = (url: string) => {
-    // Always treat as token image
-    let tokenUrl = url;
-    if (!url.includes('/images/actors/token/')) {
-      tokenUrl = url.replace('/images/actors/', '/images/actors/token/');
-    }
-    setSelectedActorUrl(tokenUrl);
+    setSelectedActorUrl(url);
     setImageFile(null);
-    setImagePreview(tokenUrl);
+    setImagePreview(url);
+  };
+
+  const handleFlipImage = async () => {
+    const imageUrl = selectedActorUrl || imagePreview;
+    if (!imageUrl || !imageUrl.includes('/images/')) {
+      alert('Please select an image from the gallery to flip');
+      return;
+    }
+
+    setFlippingImage(true);
+    try {
+      const response = await fetch(`${API_URL}/api/images/flip-horizontal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ imageUrl: imageUrl.replace(API_URL, '') })
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to flip image');
+      }
+
+      // Force image reload by adding cache buster
+      const cacheBuster = Date.now();
+      const urlWithCache = `${imageUrl.split('?')[0]}?t=${cacheBuster}`;
+      setImagePreview(urlWithCache);
+      if (selectedActorUrl) {
+        setSelectedActorUrl(urlWithCache);
+      }
+      alert('Image flipped successfully!');
+    } catch (err: any) {
+      console.error('Error flipping image:', err);
+      alert(err.message || 'Failed to flip image');
+    } finally {
+      setFlippingImage(false);
+    }
   };
 
   const handleAIImageGenerated = (imageUrl: string, imageFile: File) => {
-    // If AI generator is for portrait, update portrait preview, else map image
-    if (showAIGenerator && portraitPreview !== null) {
-      setPortraitPreview(`${API_URL}/images/actors/portrait/${imageUrl}`);
-      setSelectedPortraitUrl(`${API_URL}/images/actors/portrait/${imageUrl}`);
+    if (generatingStateFor) {
+      // Adding state image via AI generation
+      setStates(prev => [...prev, { name: generatingStateFor, imageUrl, tags: editingStateTags }]);
+      setGeneratingStateFor(null);
+      setEditingStateName('');
+      setEditingStateTags('');
+      setShowStateImagePicker(null);
+    } else if (showAIGenerator && portraitPreview !== null) {
+      // If AI generator is for portrait, update portrait preview
+      setPortraitFile(imageFile);
+      setPortraitPreview(`${API_URL}/images/portrait/${imageUrl}`);
+      setSelectedPortraitUrl(`${API_URL}/images/portrait/${imageUrl}`);
     } else {
+      // Map/token image
       setImageFile(imageFile);
       setSelectedActorUrl(null);
-      setImagePreview(`${API_URL}/images/actors/token/${imageUrl}`);
+      setImagePreview(`${API_URL}/images/token/${imageUrl}`);
     }
     setShowAIGenerator(false);
-    // Refresh the gallery after AI image is generated
-    reloadActors();
+  };
+
+  const handleAddState = async () => {
+    if (!editingStateName.trim()) return;
+    if (states.some(s => s.name === editingStateName.trim())) {
+      alert('A state with this name already exists');
+      return;
+    }
+    
+    // Show the image picker for this state
+    setShowStateImagePicker(editingStateName.trim());
+  };
+
+  const handleStateImageSelect = (stateName: string, url: string) => {
+    // Strip API_URL to store relative path
+    const relativeUrl = url.replace(API_URL, '');
+    const tags = editingStateTags.trim();
+    setStates(prev => [...prev, { name: stateName, imageUrl: relativeUrl, tags }]);
+    setEditingStateName('');
+    setEditingStateTags('');
+    setShowStateImagePicker(null);
+  };
+
+  const handleStateFileSelect = async (stateName: string, file: File) => {
+    // Upload the file immediately to the server
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+      const response = await fetch(`${API_URL}/api/upload?folder=token`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) throw new Error('Upload failed');
+      
+      const data = await response.json();
+      const tags = editingStateTags.trim();
+      setStates(prev => [...prev, { name: stateName, imageUrl: data.path, tags }]);
+      setEditingStateName('');
+      setEditingStateTags('');
+      setShowStateImagePicker(null);
+    } catch (error) {
+      console.error('Error uploading state image:', error);
+      alert('Failed to upload state image');
+    }
+  };
+
+  const handleRemoveState = (stateName: string) => {
+    setStates(prev => prev.filter(s => s.name !== stateName));
+  };
+
+  const handleUpdateStateImage = (stateName: string, url: string) => {
+    const relativeUrl = url.replace(API_URL, '');
+    setStates(prev => prev.map(s => s.name === stateName ? { ...s, imageUrl: relativeUrl } : s));
+  };
+
+  const handleUpdateStateImageFile = async (stateName: string, file: File) => {
+    // Upload the file immediately to the server
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('type', 'token');
+    
+    try {
+      const response = await fetch(`${API_URL}/api/upload`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        throw new Error('Upload failed');
+      }
+      
+      const data = await response.json();
+      const uploadedUrl = data.url;
+      
+      setStates(prev => prev.map(s => s.name === stateName ? { ...s, imageUrl: uploadedUrl } : s));
+    } catch (error) {
+      console.error('Failed to upload state image:', error);
+      alert('Failed to upload state image. Please try again.');
+    }
+  };
+
+  const handleUpdateStateName = (oldName: string, newName: string) => {
+    if (newName.trim() && newName !== oldName) {
+      setStates(prev => prev.map(s => s.name === oldName ? { ...s, name: newName } : s));
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -256,31 +371,40 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
       characterSheetUrl: characterSheetUrl || undefined
     };
 
-    // Compose image file and url
+    // Compose image file and url, stripping API_URL to store relative path
     const imageFileToSend: File | null = imageFile || null;
-    const imageUrlToSend: string | undefined = !imageFile && selectedActorUrl ? selectedActorUrl : undefined;
-    // Compose portrait file and url
-    // (portraitFileToSend and portraitUrlToSend removed; not used yet)
+    const imageUrlToSend: string | undefined = !imageFile && selectedActorUrl ? selectedActorUrl.replace(API_URL, '') : undefined;
+    // Compose portrait file and url, stripping API_URL to store relative path
+    const portraitFileToSend: File | null = portraitFile || null;
+    const portraitUrlToSend: string | undefined = !portraitFile && selectedPortraitUrl ? selectedPortraitUrl.replace(API_URL, '') : undefined;
 
     if (editingToken && onUpdateToken) {
-      // For now, pass portraitUrl as 5th arg (actorUrl), and imageFile as 3rd arg, imageUrl as 5th if no portraitUrl
-      // You will need to update the parent handler to support portraitUrl
       onUpdateToken(
         editingToken.id,
         actor,
         imageFileToSend,
         color,
-        imageUrlToSend
+        imageUrlToSend,
+        portraitFileToSend,
+        portraitUrlToSend,
+        states.length > 0 ? states : undefined,
+        gridWidth,
+        gridHeight,
+        tags || undefined
       );
-      // TODO: Add portrait support to parent handler
     } else {
       onCreateToken(
         actor,
         imageFileToSend,
         color,
-        imageUrlToSend
+        imageUrlToSend,
+        portraitFileToSend,
+        portraitUrlToSend,
+        states.length > 0 ? states : undefined,
+        gridWidth,
+        gridHeight,
+        tags || undefined
       );
-      // TODO: Add portrait support to parent handler
     }
   };
 
@@ -335,144 +459,145 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
           </div>
 
           <div className="form-group">
-            <label>Portrait Image (Card/Header, optional):</label>
-            <div className="image-upload-options">
-              <input 
-                type="file" 
-                accept="image/*"
-                onChange={handlePortraitChange}
-              />
-              <button 
-                type="button" 
-                onClick={() => {
-                  // If a token image is selected, add it as a reference image for portrait generation
-                  if (selectedActorUrl) {
-                    // Fetch the image as a blob and create a File object
-                    fetch(selectedActorUrl)
-                      .then(res => res.blob())
-                      .then(blob => {
-                        const file = new File([blob], selectedActorUrl.split('/').pop() || 'token-image.png', { type: blob.type });
-                        setAIReferenceImages([file]);
-                        setAIPromptTemplate('portrait');
-                        setShowAIGenerator(true);
-                      });
-                  } else {
+            <label>Token Size (grid squares):</label>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <label style={{ margin: 0, fontSize: '14px' }}>Width:</label>
+                <input 
+                  type="number" 
+                  value={gridWidth}
+                  onChange={(e) => setGridWidth(Math.max(1, Math.min(3, parseInt(e.target.value) || 1)))}
+                  min="1"
+                  max="3"
+                  style={{ width: '60px' }}
+                />
+              </div>
+              <span>×</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <label style={{ margin: 0, fontSize: '14px' }}>Height:</label>
+                <input 
+                  type="number" 
+                  value={gridHeight}
+                  onChange={(e) => setGridHeight(Math.max(1, Math.min(3, parseInt(e.target.value) || 1)))}
+                  min="1"
+                  max="3"
+                  style={{ width: '60px' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <ImagePicker
+            label="Portrait Image (Card/Header, optional):"
+            imagePreview={portraitPreview}
+            selectedUrl={selectedPortraitUrl}
+            folder="portrait"
+            onFileSelect={handlePortraitChange}
+            onUrlSelect={handlePortraitSelect}
+            onAIGenerate={() => {
+              // If a token image is selected, add it as a reference image for portrait generation
+              if (selectedActorUrl) {
+                fetch(selectedActorUrl)
+                  .then(res => res.blob())
+                  .then(blob => {
+                    const file = new File([blob], selectedActorUrl.split('/').pop() || 'token-image.png', { type: blob.type });
+                    setAIReferenceImages([file]);
+                    setAIPromptTemplate('portrait');
+                    setShowAIGenerator(true);
+                  });
+              } else {
+                setAIReferenceImages([]);
+                setAIPromptTemplate('portrait');
+                setShowAIGenerator(true);
+              }
+            }}
+            aiGenerateLabel="Generate Portrait"
+          />
+
+          <ImagePicker
+            label="Token Image (Map, optional):"
+            imagePreview={imagePreview}
+            selectedUrl={selectedActorUrl}
+            folder="token"
+            onFileSelect={handleImageChange}
+            onUrlSelect={handleActorSelect}
+            tags={tags}
+            onTagsChange={setTags}
+            onAIGenerate={() => {
+              // Use portrait as reference for generating a token image
+              if (selectedPortraitUrl) {
+                fetch(selectedPortraitUrl)
+                  .then(res => res.blob())
+                  .then(blob => {
+                    const file = new File([blob], selectedPortraitUrl.split('/').pop() || 'portrait-ref.png', { type: blob.type });
+                    setAIReferenceImages([file]);
+                    setAIPromptTemplate('token');
+                    setShowAIGenerator(true);
+                  })
+                  .catch(err => {
+                    console.error('Failed to fetch portrait for AI reference:', err);
+                    setAIReferenceImages([]);
+                    setAIPromptTemplate('token');
+                    setShowAIGenerator(true);
+                  });
+              } else if (portraitPreview && portraitPreview.startsWith('data:')) {
+                fetch(portraitPreview)
+                  .then(res => res.blob())
+                  .then(blob => {
+                    const file = new File([blob], 'portrait-ref.png', { type: blob.type });
+                    setAIReferenceImages([file]);
+                    setAIPromptTemplate('portrait');
+                    setShowAIGenerator(true);
+                  })
+                  .catch(err => {
+                    console.error('Failed to use portrait preview as reference:', err);
                     setAIReferenceImages([]);
                     setAIPromptTemplate('portrait');
                     setShowAIGenerator(true);
-                  }
+                  });
+              } else {
+                setAIReferenceImages([]);
+                setAIPromptTemplate('portrait');
+                setShowAIGenerator(true);
+              }
+            }}
+            aiGenerateLabel="Generate Token"
+          />
+          {imagePreview && imagePreview.includes('/images/') && (
+            <div style={{ marginTop: '-12px', marginBottom: '12px' }}>
+              <button
+                type="button"
+                onClick={handleFlipImage}
+                disabled={flippingImage}
+                style={{
+                  padding: '6px 12px',
+                  background: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: flippingImage ? 'not-allowed' : 'pointer',
+                  opacity: flippingImage ? 0.5 : 1,
+                  fontSize: '12px'
                 }}
-                className="btn-ai-generate"
               >
-                🎨 Generate with AI
+                {flippingImage ? 'Flipping...' : '🔄 Flip Image Horizontally'}
               </button>
+              <p style={{ fontSize: '11px', color: '#888', marginTop: '4px', marginBottom: 0 }}>
+                This will permanently flip the selected gallery image on disk
+              </p>
             </div>
-            {availablePortraits.length > 0 && (
-              <div className="actor-gallery">
-                <p className="actor-gallery-label">Or choose from existing:</p>
-                <div className="actor-gallery-grid">
-                  {availablePortraits.map(actor => (
-                    <div 
-                      key={actor.url}
-                      className={`actor-thumbnail ${selectedPortraitUrl === actor.url ? 'selected' : ''}`}
-                      onClick={() => handlePortraitSelect(actor.url)}
-                    >
-                      <img src={actor.url} alt={actor.filename} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {portraitPreview && (
-              <div className="image-preview-container">
-                <p className="preview-label">Portrait Preview:</p>
-                <img src={portraitPreview} alt="Portrait Preview" style={{ width: 80, height: 80, borderRadius: '50%' }} />
-              </div>
-            )}
-          </div>
-
-          <div className="form-group">
-            <label>Token Image (Map, optional):</label>
-            <div className="image-upload-options">
-              <input 
-                type="file" 
-                accept="image/*"
-                onChange={handleImageChange}
+          )}
+          {(imagePreview || color) && (
+            <div className="image-preview-container">
+              <p className="preview-label">Preview:</p>
+              <canvas 
+                ref={previewCanvasRef} 
+                width={100} 
+                height={100}
+                className="token-preview-canvas"
               />
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    // Use portrait as reference for generating a token image
-                    if (selectedPortraitUrl) {
-                      fetch(selectedPortraitUrl)
-                        .then(res => res.blob())
-                        .then(blob => {
-                          const file = new File([blob], selectedPortraitUrl.split('/').pop() || 'portrait-ref.png', { type: blob.type });
-                            setAIReferenceImages([file]);
-                            setAIPromptTemplate('token');
-                            setShowAIGenerator(true);
-                        })
-                        .catch(err => {
-                          console.error('Failed to fetch portrait for AI reference:', err);
-                            setAIReferenceImages([]);
-                            setAIPromptTemplate('token');
-                            setShowAIGenerator(true);
-                        });
-                    } else if (portraitPreview && portraitPreview.startsWith('data:')) {
-                      // If portraitPreview is an inline data URL (uploaded file), convert to blob
-                      fetch(portraitPreview)
-                        .then(res => res.blob())
-                        .then(blob => {
-                          const file = new File([blob], 'portrait-ref.png', { type: blob.type });
-                            setAIReferenceImages([file]);
-                            setAIPromptTemplate('portrait');
-                            setShowAIGenerator(true);
-                        })
-                        .catch(err => {
-                          console.error('Failed to use portrait preview as reference:', err);
-                            setAIReferenceImages([]);
-                            setAIPromptTemplate('portrait');
-                            setShowAIGenerator(true);
-                        });
-                    } else {
-                        setAIReferenceImages([]);
-                        setAIPromptTemplate('portrait');
-                        setShowAIGenerator(true);
-                    }
-                  }}
-                  className="btn-ai-generate"
-                >
-                  🎨 Generate with AI
-                </button>
             </div>
-            {availableTokens.length > 0 && (
-              <div className="actor-gallery">
-                <p className="actor-gallery-label">Or choose from existing:</p>
-                <div className="actor-gallery-grid">
-                  {availableTokens.map(actor => (
-                    <div 
-                      key={actor.url}
-                      className={`actor-thumbnail ${selectedActorUrl === actor.url ? 'selected' : ''}`}
-                      onClick={() => handleActorSelect(actor.url)}
-                    >
-                      <img src={actor.url} alt={actor.filename} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(imagePreview || color) && (
-              <div className="image-preview-container">
-                <p className="preview-label">Preview:</p>
-                <canvas 
-                  ref={previewCanvasRef} 
-                  width={100} 
-                  height={100}
-                  className="token-preview-canvas"
-                />
-              </div>
-            )}
-          </div>
+          )}
 
 
           <div className="form-group">
@@ -481,8 +606,7 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
                 type="checkbox" 
                 checked={isPlayer} 
                 onChange={(e) => setIsPlayer(e.target.checked)}
-              />
-              <span>Player Character (reveals fog of war)</span>
+              />              <span>Player Character (reveals fog of war)</span>
             </label>
           </div>
 
@@ -528,7 +652,169 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
             />
           </div>
 
-          
+          {imagePreview && (
+            <div className="form-group">
+              <label>Token Image States:</label>
+              <p style={{ fontSize: '12px', color: '#888', marginBottom: '8px' }}>
+                Add different states for this token (e.g., active/inactive, healthy/injured)
+              </p>
+              {states.map(state => (
+                <div key={state.name} style={{ 
+                  marginBottom: '12px',
+                  padding: '12px',
+                  background: '#2a2a2a',
+                  borderRadius: '4px',
+                  border: '1px solid #444'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <div style={{ flex: 1 }}>
+                      <input
+                        type="text"
+                        value={state.name}
+                        onChange={(e) => handleUpdateStateName(state.name, e.target.value)}
+                        placeholder="State name"
+                        style={{ 
+                          width: '100%',
+                          padding: '6px',
+                          background: '#1a1a1a',
+                          border: '1px solid #555',
+                          borderRadius: '4px',
+                          color: '#fff',
+                          marginBottom: '4px'
+                        }}
+                      />
+                      <input
+                        type="text"
+                        value={state.tags || ''}
+                        onChange={(e) => {
+                          setStates(prev => prev.map(s => 
+                            s.name === state.name ? { ...s, tags: e.target.value } : s
+                          ));
+                        }}
+                        placeholder="Tags (comma-separated)"
+                        style={{ 
+                          width: '100%',
+                          padding: '6px',
+                          background: '#1a1a1a',
+                          border: '1px solid #555',
+                          borderRadius: '4px',
+                          color: '#fff',
+                          fontSize: '11px'
+                        }}
+                      />
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => handleRemoveState(state.name)}
+                      style={{ 
+                        background: '#d32f2f', 
+                        color: 'white', 
+                        border: 'none', 
+                        padding: '6px 12px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <ImagePicker
+                    label=""
+                    imagePreview={state.imageUrl.startsWith('http') ? state.imageUrl : `${API_URL}${state.imageUrl}`}
+                    selectedUrl={state.imageUrl.startsWith('http') ? state.imageUrl : `${API_URL}${state.imageUrl}`}
+                    folder="token"
+                    onFileSelect={(file) => handleUpdateStateImageFile(state.name, file)}
+                    onUrlSelect={(url) => handleUpdateStateImage(state.name, url)}
+                    onAIGenerate={() => {
+                      setGeneratingStateFor(state.name);
+                      setAIPromptTemplate('token');
+                      setAIReferenceImages(imageFile ? [imageFile] : []);
+                      setShowAIGenerator(true);
+                    }}
+                    aiGenerateLabel="Generate State Image"
+                    showTags={false}
+                  />
+                </div>
+              ))}
+              {showStateImagePicker ? (
+                <div style={{ 
+                  marginBottom: '12px',
+                  padding: '12px',
+                  background: '#2a2a2a',
+                  borderRadius: '4px',
+                  border: '1px solid #4CAF50'
+                }}>
+                  <h4 style={{ marginBottom: '8px', color: '#4CAF50' }}>
+                    Adding State: {showStateImagePicker}
+                  </h4>
+                  <ImagePicker
+                    label="State Image"
+                    imagePreview={null}
+                    selectedUrl={null}
+                    folder="token"
+                    onFileSelect={(file) => handleStateFileSelect(showStateImagePicker, file)}
+                    onUrlSelect={(url) => handleStateImageSelect(showStateImagePicker, url)}
+                    onAIGenerate={() => {
+                      setGeneratingStateFor(showStateImagePicker);
+                      setAIPromptTemplate('token');
+                      setAIReferenceImages(imageFile ? [imageFile] : []);
+                      setShowAIGenerator(true);
+                    }}
+                    aiGenerateLabel="Generate State Image"
+                    showTags={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowStateImagePicker(null);
+                      setEditingStateName('');
+                      setEditingStateTags('');
+                    }}
+                    style={{
+                      marginTop: '8px',
+                      background: '#666',
+                      color: 'white',
+                      border: 'none',
+                      padding: '6px 12px',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div style={{ marginTop: '8px' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      type="text"
+                      placeholder="State name (e.g., 'lit', 'unlit')"
+                      value={editingStateName}
+                      onChange={(e) => setEditingStateName(e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    <button 
+                      type="button"
+                      onClick={handleAddState}
+                      disabled={!editingStateName.trim()}
+                      style={{
+                        background: editingStateName.trim() ? '#4CAF50' : '#666',
+                        color: 'white',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '4px',
+                        cursor: editingStateName.trim() ? 'pointer' : 'not-allowed',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Add State
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="form-actions">
             <button type="submit" className="btn-primary">{editingToken ? 'Update Token' : 'Create Token'}</button>
@@ -539,7 +825,11 @@ export default function TokenCreator({ onCreateToken, onUpdateToken, editingToke
         {showAIGenerator && (
           <AIImageGenerator
             onImageGenerated={handleAIImageGenerated}
-            onClose={() => setShowAIGenerator(false)}
+            onClose={() => {
+              setShowAIGenerator(false);
+              setGeneratingStateFor(null);
+              setAIReferenceImages([]);
+            }}
             promptTemplate={aiPromptTemplate}
             referenceImages={aiReferenceImages}
             initialPrompt={description}

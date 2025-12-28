@@ -34,7 +34,6 @@
   overflow-y: auto;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   height: fit-content;
-  max-height: calc(100vh - 2rem);
 }
 
 .actor-list-panel h3 {
@@ -566,6 +565,10 @@
   justify-content: center;
   line-height: 1;
   transition: color 0.2s;
+}
+
+.close-button::before {
+  content: '×';
 }
 
 .close-button:hover {

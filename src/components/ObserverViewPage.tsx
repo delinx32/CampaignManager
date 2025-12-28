@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import ObserverView from './ObserverView';
 import TokenCard from './TokenCard';
 import { API_URL } from '../config';
-import type { Token, Prop } from '../types';
+import type { Token, Prop, RevealZone } from '../types';
 
 interface GameState {
   backgroundImage: string | null;
@@ -21,10 +22,13 @@ interface GameState {
   imageDimensions?: { width: number; height: number } | null;
   currentActorId?: string | null;
   showObserverCards?: boolean;
+  revealZones?: RevealZone[];
+  permanentlyRevealedZones?: string[];
 }
 
 export default function ObserverViewPage() {
-  const { session: sessionName } = useParams<{ session: string }>();
+  const { campaignName, sessionName } = useParams<{ campaignName: string; sessionName: string }>();
+  const { user } = useAuth();
   
   const [gameState, setGameState] = useState<GameState>({
     backgroundImage: null,
@@ -45,11 +49,13 @@ export default function ObserverViewPage() {
   const [sessionEnded, setSessionEnded] = useState(false);
 
   useEffect(() => {
+    if (!campaignName || !sessionName) return;
+
     // Poll for game state updates from backend
     const updateGameState = async () => {
       try {
-        const url = sessionName 
-          ? `${API_URL}/api/game-state?session=${encodeURIComponent(sessionName)}`
+        const url = (campaignName && sessionName)
+          ? `${API_URL}/api/game-state?campaign=${encodeURIComponent(campaignName)}&session=${encodeURIComponent(sessionName)}`
           : `${API_URL}/api/game-state`;
         const response = await fetch(url);
         if (response.ok) {
@@ -86,7 +92,7 @@ export default function ObserverViewPage() {
     const interval = setInterval(updateGameState, 1000);
 
     return () => clearInterval(interval);
-  }, [sessionName]);
+  }, [campaignName, sessionName]);
 
   const activeTokens = gameState.tokens
     .filter(t => t.active)
@@ -283,6 +289,11 @@ export default function ObserverViewPage() {
           gridRows={gameState.gridRows}
           showGrid={gameState.showGrid}
           currentActorId={gameState.currentActorId}
+          revealZones={gameState.revealZones || []}
+          permanentlyRevealedZones={new Set(gameState.permanentlyRevealedZones || [])}
+          userRole={user?.role as 'gm' | 'player' | undefined}
+          campaignName={campaignName}
+          sessionName={sessionName}
         />
       </div>
     </>

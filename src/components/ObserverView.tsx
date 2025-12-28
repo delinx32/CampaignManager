@@ -1,7 +1,16 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import './ObserverView.css';
 import { API_URL } from '../config';
-import type { Token, Prop } from '../types';
+import type { Token, Prop, RevealZone } from '../types';
+
+// Helper function to get the current image URL based on active state
+const getCurrentImageUrl = (item: Token | Prop): string | undefined => {
+  if (item.activeState && item.states) {
+    const state = item.states.find(s => s.name === item.activeState);
+    if (state) return state.imageUrl;
+  }
+  return item.imageUrl;
+};
 
 interface ObserverViewProps {
   backgroundImage: string | null;
@@ -18,6 +27,11 @@ interface ObserverViewProps {
   showGrid: boolean;
   selectedTokenId?: string | null;
   currentActorId?: string | null;
+  revealZones?: RevealZone[];
+  permanentlyRevealedZones?: Set<string>;
+  userRole?: 'gm' | 'player';
+  campaignName?: string;
+  sessionName?: string;
 }
 
 export default function ObserverView({ 
@@ -34,7 +48,12 @@ export default function ObserverView({
   gridRows,
   showGrid,
   selectedTokenId,
-  currentActorId
+  currentActorId,
+  revealZones = [],
+  permanentlyRevealedZones = new Set(),
+  userRole,
+  campaignName,
+  sessionName
 }: ObserverViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fogCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -42,31 +61,43 @@ export default function ObserverView({
   const tokenImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [hoveredToken, setHoveredToken] = useState<Token | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [draggedToken, setDraggedToken] = useState<Token | null>(null);
 
   // Load background image
   useEffect(() => {
     if (backgroundImage) {
+      console.log('ObserverView: Loading background image:', backgroundImage);
+      setImageLoaded(false);
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
+        console.log('ObserverView: Background image loaded successfully');
         imageRef.current = img;
-        drawCanvas();
+        setImageLoaded(true);
+      };
+      img.onerror = (e) => {
+        console.error('ObserverView: Failed to load background image:', backgroundImage, e);
       };
       img.src = backgroundImage;
+    } else {
+      console.log('ObserverView: No background image provided');
+      setImageLoaded(false);
     }
   }, [backgroundImage]);
 
   // Load token images
   useEffect(() => {
     tokens.forEach(token => {
-      if (token.imageUrl && !tokenImagesRef.current.has(token.id)) {
+      const currentImageUrl = getCurrentImageUrl(token);
+      if (currentImageUrl && !tokenImagesRef.current.has(token.id)) {
         const img = new Image();
         img.onload = () => {
           tokenImagesRef.current.set(token.id, img);
           drawCanvas();
         };
         // Prepend API_URL if the image URL is relative
-        img.src = token.imageUrl.startsWith('http') ? token.imageUrl : `${API_URL}${token.imageUrl}`;
+        img.src = currentImageUrl.startsWith('http') ? currentImageUrl : `${API_URL}${currentImageUrl}`;
       }
     });
   }, [tokens]);
@@ -74,14 +105,15 @@ export default function ObserverView({
   // Load prop images
   useEffect(() => {
     props.forEach(prop => {
-      if (prop.imageUrl && !tokenImagesRef.current.has(prop.id)) {
+      const currentImageUrl = getCurrentImageUrl(prop);
+      if (currentImageUrl && !tokenImagesRef.current.has(prop.id)) {
         const img = new Image();
         img.onload = () => {
           tokenImagesRef.current.set(prop.id, img);
           drawCanvas();
         };
         // Prepend API_URL if the image URL is relative
-        img.src = prop.imageUrl.startsWith('http') ? prop.imageUrl : `${API_URL}${prop.imageUrl}`;
+        img.src = currentImageUrl.startsWith('http') ? currentImageUrl : `${API_URL}${currentImageUrl}`;
       }
     });
   }, [props]);
@@ -92,21 +124,31 @@ export default function ObserverView({
     const fogCanvas = fogCanvasRef.current;
     
     if (canvas && fogCanvas) {
-      // Set to match the GM view dimensions (1200x800)
-      canvas.width = 1200;
-      canvas.height = 800;
-      fogCanvas.width = 1200;
-      fogCanvas.height = 800;
+      // Set to match the GM view dimensions (1920x1080) for consistent transform coordinates
+      canvas.width = 1920;
+      canvas.height = 1080;
+      fogCanvas.width = 1920;
+      fogCanvas.height = 1080;
     }
   }, []);
 
   // Draw the main canvas with background image
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !imageRef.current) return;
+    console.log('ObserverView: drawCanvas called, canvas:', !!canvas, 'imageRef:', !!imageRef.current);
+    if (!canvas) {
+      console.log('ObserverView: No canvas element');
+      return;
+    }
+    if (!imageRef.current) {
+      console.log('ObserverView: No image loaded yet');
+      return;
+    }
     
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    console.log('ObserverView: Drawing canvas with image');
 
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -134,26 +176,29 @@ export default function ObserverView({
     // Restore context state
     ctx.restore();
 
-    // Draw props (first, so tokens appear on top - only props WITH images show on observer view)
+    // Draw props (first, so tokens appear on top)
     console.log('ObserverView: Drawing props, total:', props.length);
     props.forEach(prop => {
-      console.log('Prop:', prop.id, 'has image:', !!prop.imageUrl, 'x:', prop.x, 'y:', prop.y, 'radius:', prop.radius);
-      if (prop.x !== undefined && prop.y !== undefined && prop.radius && prop.imageUrl) {
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((transform.rotation * Math.PI) / 180);
-        ctx.scale(transform.scale, transform.scale);
-        ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-        
-        // Apply rotation and scale from prop properties
-        ctx.translate(prop.x, prop.y);
-        const propRotation = prop.rotation || 0;
-        ctx.rotate((propRotation * Math.PI) / 180);
-        const propScale = prop.scale || 1;
-        ctx.scale(propScale, propScale);
-
+      const currentImageUrl = getCurrentImageUrl(prop);
+      console.log('Prop:', prop.id, 'has image:', !!currentImageUrl, 'x:', prop.x, 'y:', prop.y, 'radius:', prop.radius);
+      if (prop.x !== undefined && prop.y !== undefined && prop.radius) {
         const propImg = tokenImagesRef.current.get(prop.id);
-        if (propImg && propImg.complete) {
+        
+        if (currentImageUrl && propImg && propImg.complete) {
+          // Draw prop with image
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate((transform.rotation * Math.PI) / 180);
+          ctx.scale(transform.scale, transform.scale);
+          ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
+          
+          // Apply rotation and scale from prop properties
+          ctx.translate(prop.x, prop.y);
+          const propRotation = prop.rotation || 0;
+          ctx.rotate((propRotation * Math.PI) / 180);
+          const propScale = prop.scale || 1;
+          ctx.scale(propScale, propScale);
+
           ctx.save();
           ctx.beginPath();
           ctx.arc(0, 0, prop.radius - 1, 0, Math.PI * 2);
@@ -162,20 +207,24 @@ export default function ObserverView({
           const imgSize = (prop.radius - 1) * 2;
           ctx.drawImage(
             propImg,
-            prop.x - prop.radius + 1,
-            prop.y - prop.radius + 1,
+            -prop.radius + 1,
+            -prop.radius + 1,
             imgSize,
             imgSize
           );
           ctx.restore();
+          ctx.restore();
         }
-        
-        ctx.restore();
       }
     });
 
     // Draw tokens (on top of props - only active ones for players)
-    tokens.filter(token => token.active).forEach(token => {
+    // Use dragged token if currently dragging, otherwise use tokens from props
+    const tokensToRender = draggedToken 
+      ? tokens.map(t => t.id === draggedToken.id ? draggedToken : t)
+      : tokens;
+      
+    tokensToRender.filter(token => token.active).forEach(token => {
       // Skip tokens without positions
       if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) return;
       
@@ -216,10 +265,20 @@ export default function ObserverView({
       
       
       // Draw token image if available
-      if (token.imageUrl) {
+      const currentImageUrl = getCurrentImageUrl(token);
+      if (currentImageUrl) {
         const tokenImg = tokenImagesRef.current.get(token.id);
         if (tokenImg && tokenImg.complete) {
           ctx.save();
+          
+          // Apply horizontal flip if token is facing left
+          const facing = token.currentlyFacing || 'right';
+          if (facing === 'left') {
+            ctx.translate(token.x, token.y);
+            ctx.scale(-1, 1);
+            ctx.translate(-token.x, -token.y);
+          }
+          
           ctx.beginPath();
           ctx.arc(token.x, token.y, token.radius - 1, 0, Math.PI * 2);
           ctx.clip();
@@ -281,7 +340,7 @@ export default function ObserverView({
 
       ctx.restore();
     }
-  }, [transform, tokens, props, showGrid, gridColumns, gridRows, selectedTokenId, currentActorId]);
+  }, [backgroundImage, transform, tokens, props, showGrid, gridColumns, gridRows, selectedTokenId, currentActorId, imageLoaded, draggedToken]);
 
   // Draw fog of war
   const drawFog = useCallback(() => {
@@ -324,7 +383,57 @@ export default function ObserverView({
 
     // Only clear fog around active player tokens and revealed path if there are light sources
     const activePlayerTokens = tokens.filter(token => token.active && token.actor?.player === true);
-    if (activePlayerTokens.length > 0 || revealedPath.length > 0) {
+    
+    // Helper function to parse light radius from tags (e.g., "light[30]" -> 30)
+    const parseLightRadius = (tags?: string): number | null => {
+      if (!tags) return null;
+      const match = tags.match(/light\[(\d+)\]/i);
+      return match ? parseInt(match[1], 10) : null;
+    };
+
+    // Helper function to get effective tags from token/prop considering active state
+    const getEffectiveTags = (item: Token | Prop): string | undefined => {
+      if (item.activeState && item.states) {
+        const activeStateObj = item.states.find(s => s.name === item.activeState);
+        // If a state is active, only use that state's tags (even if undefined)
+        // Don't fall back to base tags when a state is explicitly selected
+        return activeStateObj?.tags;
+      }
+      // No active state, use base tags
+      return item.tags;
+    };
+
+    // Collect light sources from tokens and props with light tags
+    const lightSources: Array<{ x: number; y: number; radius: number }> = [];
+    const gridCellDistance = 5; // 5 feet per grid square (standard D&D)
+    
+    // Check all tokens for light tags
+    tokens.forEach(token => {
+      if (token.x !== undefined && token.y !== undefined && token.x !== null && token.y !== null) {
+        const effectiveTags = getEffectiveTags(token);
+        const lightRadius = parseLightRadius(effectiveTags);
+        if (lightRadius) {
+          // Convert feet to grid squares
+          const lightRadiusSquares = lightRadius / gridCellDistance;
+          lightSources.push({ x: token.x, y: token.y, radius: lightRadiusSquares });
+        }
+      }
+    });
+    
+    // Check all props for light tags
+    props.forEach(prop => {
+      if (prop.x !== undefined && prop.y !== undefined) {
+        const effectiveTags = getEffectiveTags(prop);
+        const lightRadius = parseLightRadius(effectiveTags);
+        if (lightRadius) {
+          // Convert feet to grid squares
+          const lightRadiusSquares = lightRadius / gridCellDistance;
+          lightSources.push({ x: prop.x, y: prop.y, radius: lightRadiusSquares });
+        }
+      }
+    });
+    
+    if (activePlayerTokens.length > 0 || revealedPath.length > 0 || lightSources.length > 0 || revealZones.length > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'destination-out';
       
@@ -392,15 +501,217 @@ export default function ObserverView({
         ctx.restore();
       });
       
+      // Reveal fog around light sources (props with lighting effects)
+      lightSources.forEach(light => {
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((transform.rotation * Math.PI) / 180);
+        ctx.scale(transform.scale, transform.scale);
+        ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
+
+        const gradient = ctx.createRadialGradient(
+          light.x, light.y, 0,
+          light.x, light.y, gridCellSize * light.radius
+        );
+        gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
+        gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.8)');
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(light.x, light.y, gridCellSize * light.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      });
+      
+      // Reveal fog in reveal zones
+      revealZones.forEach(zone => {
+        // Check if any active player token is in the zone
+        const playerInZone = activePlayerTokens.some(token => {
+          if (token.x === undefined || token.y === undefined) return false;
+          return (
+            token.x >= zone.x &&
+            token.x <= zone.x + zone.width &&
+            token.y >= zone.y &&
+            token.y <= zone.y + zone.height
+          );
+        });
+
+        // Reveal if player is in zone, or if zone is permanent and has been revealed
+        if (playerInZone || (zone.permanent && permanentlyRevealedZones.has(zone.id))) {
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate((transform.rotation * Math.PI) / 180);
+          ctx.scale(transform.scale, transform.scale);
+          ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
+
+          // Clear fog in this rectangular zone
+          ctx.fillStyle = 'rgba(0, 0, 0, 1)';
+          ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
+
+          ctx.restore();
+        }
+      });
+      
       ctx.restore();
     }
-  }, [tokens, transform, fogEnabled, fogRevealDistance, playerFogOpacity, lightingCondition, revealedPath, gridColumns, gridRows, imageRef]);
+  }, [tokens, props, transform, fogEnabled, fogRevealDistance, playerFogOpacity, lightingCondition, revealedPath, gridColumns, gridRows, imageRef, revealZones, permanentlyRevealedZones]);
 
   // Redraw when props change
   useEffect(() => {
     drawCanvas();
     drawFog();
   }, [drawCanvas, drawFog]);
+
+  // Helper function to snap coordinates to grid
+  const snapToGrid = useCallback((x: number, y: number): { x: number; y: number } => {
+    if (!canvasRef.current || !imageRef.current || gridColumns <= 0 || gridRows <= 0) {
+      return { x, y };
+    }
+
+    const canvas = canvasRef.current;
+    const img = imageRef.current;
+    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+    const imgWidth = img.width * scale;
+    const imgHeight = img.height * scale;
+    const offsetX = (canvas.width - imgWidth) / 2;
+    const offsetY = (canvas.height - imgHeight) / 2;
+
+    const cellWidth = imgWidth / gridColumns;
+    const cellHeight = imgHeight / gridRows;
+
+    // Convert to grid coordinates (relative to image)
+    const relX = x - offsetX;
+    const relY = y - offsetY;
+
+    // Always snap the center of the image to the center of the nearest cell
+    const gridX = Math.round(relX / cellWidth - 0.5);
+    const gridY = Math.round(relY / cellHeight - 0.5);
+    
+    const snappedX = offsetX + (gridX + 0.5) * cellWidth;
+    const snappedY = offsetY + (gridY + 0.5) * cellHeight;
+
+    return { x: snappedX, y: snappedY };
+  }, [gridColumns, gridRows]);
+
+  // Calculate grid distance between two positions
+  const getGridDistance = useCallback((x1: number, y1: number, x2: number, y2: number): number => {
+    if (!canvasRef.current || !imageRef.current || gridColumns <= 0 || gridRows <= 0) {
+      return 0;
+    }
+
+    const canvas = canvasRef.current;
+    const img = imageRef.current;
+    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+    const imgWidth = img.width * scale;
+    const imgHeight = img.height * scale;
+    const offsetX = (canvas.width - imgWidth) / 2;
+    const offsetY = (canvas.height - imgHeight) / 2;
+
+    const cellWidth = imgWidth / gridColumns;
+    const cellHeight = imgHeight / gridRows;
+
+    // Convert to grid coordinates
+    const gridX1 = Math.floor((x1 - offsetX) / cellWidth);
+    const gridY1 = Math.floor((y1 - offsetY) / cellHeight);
+    const gridX2 = Math.floor((x2 - offsetX) / cellWidth);
+    const gridY2 = Math.floor((y2 - offsetY) / cellHeight);
+
+    // Calculate Manhattan distance (grid squares)
+    return Math.abs(gridX2 - gridX1) + Math.abs(gridY2 - gridY1);
+  }, [gridColumns, gridRows]);
+
+  // Check if a position is occupied by another token
+  const isPositionOccupied = useCallback((x: number, y: number, excludeTokenId?: string): boolean => {
+    return tokens.some(token => {
+      // Skip tokens without positions
+      if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) return false;
+      
+      if (excludeTokenId && token.id === excludeTokenId) {
+        return false;
+      }
+      // Check if positions are the same (with small tolerance for floating point comparison)
+      const dx = Math.abs(token.x - x);
+      const dy = Math.abs(token.y - y);
+      return dx < 1 && dy < 1;
+    });
+  }, [tokens]);
+
+  // Check if user can move a token
+  const canMoveToken = useCallback((token: Token): boolean => {
+    // GM can move any token
+    if (userRole === 'gm') return true;
+    // Players can only move their own tokens
+    if (userRole === 'player') return token.actor?.player === true;
+    // No auth = no movement
+    return false;
+  }, [userRole]);
+
+  // Helper to convert screen to world coordinates
+  const screenToWorld = useCallback((screenX: number, screenY: number): { x: number; y: number } => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    
+    // Translate to origin
+    let worldX = screenX - centerX;
+    let worldY = screenY - centerY;
+    
+    // Apply inverse rotation
+    const angle = -(transform.rotation * Math.PI) / 180;
+    const rotatedX = worldX * Math.cos(angle) - worldY * Math.sin(angle);
+    const rotatedY = worldX * Math.sin(angle) + worldY * Math.cos(angle);
+    
+    // Apply inverse scale and translation
+    worldX = rotatedX / transform.scale - transform.x + centerX;
+    worldY = rotatedY / transform.scale - transform.y + centerY;
+
+    return { x: worldX, y: worldY };
+  }, [transform]);
+
+  // Handle mouse down to start dragging
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !imageRef.current) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Convert mouse position to canvas coordinates
+    const canvasX = (mouseX / rect.width) * canvas.width;
+    const canvasY = (mouseY / rect.height) * canvas.height;
+
+    const worldPos = screenToWorld(canvasX, canvasY);
+
+    // Check if clicking on a movable token
+    const activeTokens = tokens.filter(token => token.active);
+    for (const token of activeTokens) {
+      if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) continue;
+      
+      const dx = worldPos.x - token.x;
+      const dy = worldPos.y - token.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance <= token.radius && canMoveToken(token)) {
+        // Store the token being dragged
+        setDraggedToken(token);
+        return;
+      }
+    }
+  }, [tokens, transform, canMoveToken, screenToWorld]);
+
+  // Handle mouse up to finish dragging
+  const handleMouseUp = useCallback(() => {
+    // Keep draggedToken for a moment to let polling update before clearing
+    // This prevents the token from snapping back while waiting for the poll
+    setTimeout(() => {
+      setDraggedToken(null);
+    }, 100);
+  }, []);
 
   // Handle mouse move to detect token hovers
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -415,24 +726,67 @@ export default function ObserverView({
     const canvasX = (mouseX / rect.width) * canvas.width;
     const canvasY = (mouseY / rect.height) * canvas.height;
 
-    // Apply inverse transform to get world coordinates
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
-    
-    // Translate to origin
-    let worldX = canvasX - centerX;
-    let worldY = canvasY - centerY;
-    
-    // Apply inverse rotation
-    const angle = -(transform.rotation * Math.PI) / 180;
-    const rotatedX = worldX * Math.cos(angle) - worldY * Math.sin(angle);
-    const rotatedY = worldX * Math.sin(angle) + worldY * Math.cos(angle);
-    
-    // Apply inverse scale and translation
-    worldX = rotatedX / transform.scale - transform.x + centerX;
-    worldY = rotatedY / transform.scale - transform.y + centerY;
+    const worldPos = screenToWorld(canvasX, canvasY);
 
-    // Check if mouse is over any token
+    // Handle dragging with grid-based movement
+    if (draggedToken && draggedToken.x !== undefined && draggedToken.y !== undefined) {
+      // Snap mouse position to grid
+      const snappedPos = snapToGrid(worldPos.x, worldPos.y);
+
+      // Calculate grid distance from current position
+      const distance = getGridDistance(draggedToken.x, draggedToken.y, snappedPos.x, snappedPos.y);
+
+      // Only allow movement of exactly 1 grid square
+      if (distance !== 1) {
+        return; // Don't move if distance is not exactly 1
+      }
+
+      // Check if position is occupied by another token
+      if (isPositionOccupied(snappedPos.x, snappedPos.y, draggedToken.id)) {
+        return; // Don't move to occupied position
+      }
+
+      // Update token position in tokens array
+      const deltaX = snappedPos.x - draggedToken.x;
+      const updatedToken = { ...draggedToken, x: snappedPos.x, y: snappedPos.y };
+      if (deltaX > 0) {
+        updatedToken.currentlyFacing = 'right';
+      } else if (deltaX < 0) {
+        updatedToken.currentlyFacing = 'left';
+      }
+
+      // Update the token in the dragged state
+      setDraggedToken(updatedToken);
+
+      // Save to backend immediately and await response
+      (async () => {
+        try {
+          const response = await fetch(`${API_URL}/api/update-token-position`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              tokenId: updatedToken.id,
+              x: updatedToken.x,
+              y: updatedToken.y,
+              currentlyFacing: updatedToken.currentlyFacing
+            })
+          });
+          
+          if (!response.ok) {
+            console.error('Failed to save token position:', await response.text());
+          } else {
+            console.log('Token position saved:', updatedToken.id, updatedToken.x, updatedToken.y);
+          }
+        } catch (error) {
+          console.error('Failed to save token position:', error);
+        }
+      })();
+
+      return;
+    }
+
+    // Check if mouse is over any token (for hover effect)
     const activeTokens = tokens.filter(token => token.active);
     let foundToken: Token | null = null;
 
@@ -440,8 +794,8 @@ export default function ObserverView({
       // Skip tokens without positions
       if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) continue;
       
-      const dx = worldX - token.x;
-      const dy = worldY - token.y;
+      const dx = worldPos.x - token.x;
+      const dy = worldPos.y - token.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
       if (distance <= token.radius) {
@@ -452,7 +806,7 @@ export default function ObserverView({
 
     setHoveredToken(foundToken);
     setMousePos(foundToken ? { x: mouseX, y: mouseY } : null);
-  }, [tokens, transform]);
+  }, [tokens, transform, draggedToken, screenToWorld, snapToGrid, getGridDistance, isPositionOccupied]);
 
   const handleMouseLeave = useCallback(() => {
     setHoveredToken(null);
@@ -464,7 +818,9 @@ export default function ObserverView({
       <canvas 
         ref={canvasRef} 
         className="player-background-canvas" 
+        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
       />
       <canvas ref={fogCanvasRef} className="player-fog-canvas" />

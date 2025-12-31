@@ -1,5 +1,6 @@
 // Token helpers (player and NPC token load/save/delete)
 import express from 'express';
+import { fixImagePath } from './images.js';
 
 let ctx = {};
 
@@ -356,4 +357,24 @@ export function registerRoutes(app, options = {}) {
     if (typeof saveScenarioGameState === 'function') saveScenarioGameState(gameStateRef);
     res.json({ success: true, token: tokenToUpdate });
   });
+}
+
+// Helper function to fix image paths in a token or prop
+export function fixTokenImagePaths(item, shareKey) {
+  if (!item || !shareKey) return item;
+
+  // Fix base image URL
+  if (item.imageUrl) {
+    item.imageUrl = fixImagePath(item.imageUrl, shareKey);
+  }
+
+  // Fix state image URLs
+  if (item.states && Array.isArray(item.states)) {
+    item.states = item.states.map(state => ({
+      ...state,
+      imageUrl: state.imageUrl ? fixImagePath(state.imageUrl, shareKey) : state.imageUrl
+    }));
+  }
+
+  return item;
 }

@@ -533,3 +533,16 @@ export function registerImageRoutes(app, context = {}) {
   });
 
 }
+
+// Helper function to fix legacy image paths to use share key paths
+export function fixImagePath(imagePath, shareKey) {
+  if (!imagePath || !shareKey) return imagePath;
+  if (imagePath.startsWith('http')) return imagePath; // Already absolute URL
+
+  // If it's a legacy /images/ path, convert to share key path
+  if (imagePath.startsWith('/images/')) {
+    return `/users/${shareKey}${imagePath}`;
+  }
+
+  return imagePath;
+}

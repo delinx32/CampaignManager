@@ -14,6 +14,9 @@ function Settings() {
   const [gms, setGms] = useState<string[]>([]);
   const [newGmEmail, setNewGmEmail] = useState('');
   
+  const [players, setPlayers] = useState<string[]>([]);
+  const [newPlayerEmail, setNewPlayerEmail] = useState('');
+  
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -49,6 +52,16 @@ function Settings() {
       if (gmsResponse.ok) {
         const data = await gmsResponse.json();
         setGms(data.gms || []);
+      }
+
+      // Load players list
+      const playersResponse = await fetch(`${API_URL}/api/user/players`, {
+        credentials: 'include'
+      });
+      
+      if (playersResponse.ok) {
+        const data = await playersResponse.json();
+        setPlayers(data.players || []);
       }
     } catch (err) {
       console.error('Error loading settings:', err);
@@ -184,6 +197,66 @@ function Settings() {
     }
   };
 
+  const handleAddPlayer = async () => {
+    if (!newPlayerEmail.trim()) {
+      setMessage({ type: 'error', text: 'Email cannot be empty' });
+      setTimeout(() => setMessage(null), 5000);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/user/players`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ 
+          email: newPlayerEmail,
+          frontendUrl: window.location.origin
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setPlayers(data.players);
+        setNewPlayerEmail('');
+        setMessage({ type: 'success', text: 'Player added successfully!' });
+        setTimeout(() => setMessage(null), 3000);
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Failed to add player' });
+        setTimeout(() => setMessage(null), 5000);
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to add player' });
+      setTimeout(() => setMessage(null), 5000);
+    }
+  };
+
+  const handleRemovePlayer = async (email: string) => {
+    try {
+      const response = await fetch(`${API_URL}/api/user/players`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setPlayers(data.players);
+        setMessage({ type: 'success', text: 'Player removed successfully!' });
+        setTimeout(() => setMessage(null), 3000);
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Failed to remove player' });
+        setTimeout(() => setMessage(null), 5000);
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to remove player' });
+      setTimeout(() => setMessage(null), 5000);
+    }
+  };
+
   if (loading) {
     return <div className="settings-loading">Loading settings...</div>;
   }
@@ -276,6 +349,39 @@ function Settings() {
                 <div key={email} className="gm-item">
                   <span>{email}</span>
                   <button onClick={() => handleRemoveGM(email)} className="remove-gm-button">Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="settings-section">
+          <h2>Campaign Players</h2>
+          <p className="settings-description">
+            Add players who can access the player view for your campaigns. Only added players can log in to the player view.
+          </p>
+          
+          <div className="edit-field">
+            <label>Add Player by Email:</label>
+            <div className="gm-input-row">
+              <input
+                type="email"
+                value={newPlayerEmail}
+                onChange={(e) => setNewPlayerEmail(e.target.value)}
+                placeholder="email@example.com"
+                onKeyDown={(e) => e.key === 'Enter' && handleAddPlayer()}
+              />
+              <button onClick={handleAddPlayer} className="save-button">Add Player</button>
+            </div>
+          </div>
+
+          {players.length > 0 && (
+            <div className="gm-list">
+              <label>Current Players:</label>
+              {players.map((email) => (
+                <div key={email} className="gm-item">
+                  <span>{email}</span>
+                  <button onClick={() => handleRemovePlayer(email)} className="remove-gm-button">Remove</button>
                 </div>
               ))}
             </div>

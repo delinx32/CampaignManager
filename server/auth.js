@@ -125,12 +125,15 @@ if (isOAuthConfigured) {
         if (fs.existsSync(dataPath)) {
           try {
             const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-            // User has access if they own it or are in the GMs list
-            if (data.ownerId === user.id || (data.gms && data.gms.includes(user.email))) {
+            // User has access if they own it (by ID or email) or are in the GMs list
+            const isOwner = data.ownerId === user.id || data.ownerEmail === user.email;
+            const isGM = data.gms && data.gms.includes(user.email);
+            
+            if (isOwner || isGM) {
               accessibleShareKeys.push({
                 shareKey,
                 ownerId: data.ownerId,
-                isOwner: data.ownerId === user.id
+                isOwner: isOwner
               });
             }
           } catch (err) {
@@ -159,7 +162,15 @@ if (isOAuthConfigured) {
     // Save user with updated share keys
     saveUsers();
     
-    console.log(`✓ User ${user.email} has access to ${accessibleShareKeys.length} share key(s) - Role: ${user.role}`);
+    if (accessibleShareKeys.length > 0) {
+      console.log(`✓ User ${user.email} (ID: ${user.id}) has access to ${accessibleShareKeys.length} share key(s):`);
+      accessibleShareKeys.forEach(sk => {
+        console.log(`  - ${sk.shareKey} (isOwner: ${sk.isOwner})`);
+      });
+      console.log(`  Role assigned: ${user.role}`);
+    } else {
+      console.log(`✓ User ${user.email} (ID: ${user.id}) has no share key access - Role: player`);
+    }
     
     return done(null, user);
   }));

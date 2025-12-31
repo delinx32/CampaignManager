@@ -8,5 +8,11 @@
       "callbackURL": "http://localhost:3001/auth/google/callback"
     }
   },
-  "sessionSecret": "your-random-session-secret-here-change-in-production"
+  "sessionSecret": "your-random-session-secret-here-change-in-production",
+  "email": {
+    "gmail": "your-email@gmail.com",
+    "appPassword": "your-16-character-app-password",
+    "frontendUrl": "http://localhost:5173"
+  }
 }
+

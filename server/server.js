@@ -9,37 +9,32 @@ import { registerImageRoutes } from './images.js';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { passport, sessionMiddleware, requireAuth, requireGM, requireOwner, isOAuthConfigured, registerAuthRoutes, shareKeyExists, loadShareKeyData, saveShareKeyData } from './auth.js';
+import { getShareKeyCampaignsDir, getShareKeyArchivedCampaignsDir, createProvideShareKeyMiddleware, registerUserRoutes, getGoogleSearchCredentials } from './users.js';
+import { initializeEmailService } from './email.js';
 
 // Load environment variables from .env file in parent directory
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
-// Load settings.json for API keys
+// Load settings and Google Search credentials from users module
 let googleSearchApiKey = null;
 let googleSearchEngineId = null;
-try
-{
-  const settingsPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'settings.json');
-  if (fs.existsSync(settingsPath))
-  {
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    googleSearchApiKey = settings.googleSearchApiKey || null;
-    googleSearchEngineId = settings.googleSearchEngineId || null;
-  }
-} catch (err)
-{
-  console.warn('Could not read settings.json:', err?.message || err);
+try {
+  const credentials = getGoogleSearchCredentials();
+  googleSearchApiKey = credentials.googleSearchApiKey;
+  googleSearchEngineId = credentials.googleSearchEngineId;
   // Ensure users directory exists
-  try {
-    const usersDir = path.join(__dirname, 'users');
-    if (!fs.existsSync(usersDir)) {
-      fs.mkdirSync(usersDir, { recursive: true });
-    }
-  } catch (mkdirErr) {
-    console.error('Failed to ensure users directory exists:', mkdirErr);
+  const usersBaseDir = path.join(__dirname, 'users');
+  if (!fs.existsSync(usersBaseDir)) {
+    fs.mkdirSync(usersBaseDir, { recursive: true });
   }
+} catch (err) {
+  console.warn('Could not load settings or create users directory:', err?.message || err);
 }
+
+// Initialize email service (optional - will warn if not configured)
+initializeEmailService();
 
 // Application and directories
 const app = express();
@@ -83,7 +78,7 @@ tokens.setContext({
   getCurrentShareKey: () => gamestate.getCurrentShareKey(),
   isSessionActive: () => gamestate.isActiveSession(),
   getCurrentSessionName: () => gamestate.getCurrentSessionName(),
-  getShareKeyCampaignsDir,
+  getShareKeyCampaignsDir: (sk) => getShareKeyCampaignsDir(sk, usersDir),
   fs,
   path
 });
@@ -102,6 +97,9 @@ registerAuthRoutes(app, {
 });
 
 // Register image routes (moved to server/images.js)
+// Create provideShareKey middleware
+const provideShareKey = createProvideShareKeyMiddleware({ shareKeyExists });
+
 registerImageRoutes(app, {
   usersDir,
   requireAuth,
@@ -119,7 +117,7 @@ gamestate.startHeartbeatMonitor();
 gamestate.setContext({
   tokens,
   saveMapMetadata,
-  getShareKeyCampaignsDir,
+  getShareKeyCampaignsDir: (sk) => getShareKeyCampaignsDir(sk, usersDir),
   usersDir
 });
 
@@ -146,8 +144,8 @@ if (typeof scenario.registerRoutes === 'function')
     requireAuth,
     requireGM,
     provideShareKey,
-    getShareKeyCampaignsDir,
-    getShareKeyArchivedCampaignsDir,
+    getShareKeyCampaignsDir: (sk) => getShareKeyCampaignsDir(sk, usersDir),
+    getShareKeyArchivedCampaignsDir: (sk) => getShareKeyArchivedCampaignsDir(sk, usersDir),
     gameState: gamestate.getGameState,
     loadScenarioGameState,
     saveScenarioGameState,
@@ -171,15 +169,7 @@ if (typeof scenario.registerRoutes === 'function')
 // Props management moved to gamestate.js
 
 // Helper function to get share key's campaigns directory
-function getShareKeyCampaignsDir(shareKey)
-{
-  const shareKeyDir = path.join(usersDir, shareKey, 'campaigns');
-  if (!fs.existsSync(shareKeyDir))
-  {
-    fs.mkdirSync(shareKeyDir, { recursive: true });
-  }
-  return shareKeyDir;
-}
+// Note: getShareKeyCampaignsDir is now imported from users.js
 
 // Initialize scenarioState module and provide runtime getters/helpers
 import * as scenarioState from './scenarioState.js';
@@ -189,7 +179,7 @@ scenarioState.setContext({
   getCurrentShareKey: () => gamestate.getCurrentShareKey(),
   isSessionActive: () => gamestate.isActiveSession(),
   getCurrentSessionName: () => gamestate.getCurrentSessionName(),
-  getShareKeyCampaignsDir,
+  getShareKeyCampaignsDir: (sk) => getShareKeyCampaignsDir(sk, usersDir),
   loadPlayerTokens: tokens.loadPlayerTokens,
   loadNPCTokens: tokens.loadNPCTokens,
   loadProps,
@@ -211,186 +201,24 @@ scenario.setContext({
   setCurrentUserId: (val) => { /* no setter in gamestate */ },
   setCurrentShareKey: (val) => { gamestate.setCurrentShareKey(val); },
   setCurrentSessionName: (val) => { gamestate.setCurrentSessionName(val); },
-  getShareKeyCampaignsDir,
+  getShareKeyCampaignsDir: (sk) => getShareKeyCampaignsDir(sk, usersDir),
   getGameState: () => gamestate.getGameState(),
   setGameState: (state) => gamestate.setGameState(state)
 });
 
-// Helper function to get share key's archived campaigns directory
-function getShareKeyArchivedCampaignsDir(shareKey)
-{
-  const shareKeyDir = path.join(usersDir, shareKey, 'archived-campaigns');
-  if (!fs.existsSync(shareKeyDir))
-  {
-    fs.mkdirSync(shareKeyDir, { recursive: true });
-  }
-  return shareKeyDir;
-}
-
-// Middleware to provide a shareKey on req for routes that operate on user folders
-function provideShareKey(req, res, next)
-{
-  // Priority: explicit query param, header, authenticated user's currentShareKey, or global currentShareKey
-  const candidate = (req.query && req.query.shareKey) || req.headers['x-share-key'] || (req.user && req.user.currentShareKey) || currentShareKey;
-  if (!candidate)
-  {
-    return res.status(400).json({ error: 'No share key selected' });
-  }
-
-  // Normalize candidate
-  const shareKey = String(candidate).toLowerCase();
-
-  // Verify the share key exists
-  if (!shareKeyExists(shareKey))
-  {
-    return res.status(404).json({ error: 'Share key not found' });
-  }
-
-  req.shareKey = shareKey;
-  return next();
-}
-
-
+// Note: getShareKeyArchivedCampaignsDir is now imported from users.js
 
 // Share Key Management APIs are now handled by the auth module
 // (See auth.js for registerAuthRoutes)
 
-// User Management APIs (deprecated /api/user/key endpoint removed - use share keys instead)
-
-app.patch('/api/user/openai-key', requireOwner, express.json(), (req, res) =>
-{
-  const shareKey = req.shareKey;
-
-  if (!shareKey)
-  {
-    return res.status(400).json({ error: 'No share key selected' });
-  }
-
-  const { openaiApiKey } = req.body;
-
-  if (!openaiApiKey || typeof openaiApiKey !== 'string')
-  {
-    return res.status(400).json({ error: 'OpenAI API key is required' });
-  }
-
-  // Basic validation - OpenAI keys should start with 'sk-'
-  if (!openaiApiKey.startsWith('sk-'))
-  {
-    return res.status(400).json({ error: 'Invalid OpenAI API key format' });
-  }
-
-  // Update share key data file
-  const shareKeyData = loadShareKeyData(shareKey);
-  shareKeyData.openaiApiKey = openaiApiKey;
-  saveShareKeyData(shareKey, shareKeyData);
-
-  res.json({ success: true });
-});
-
-app.get('/api/user/openai-key', requireOwner, (req, res) =>
-{
-  const shareKey = req.shareKey;
-
-  if (!shareKey)
-  {
-    return res.json({ hasKey: false, maskedKey: null });
-  }
-
-  const shareKeyData = loadShareKeyData(shareKey);
-
-  // Return masked version for security
-  const hasKey = !!shareKeyData.openaiApiKey;
-  const maskedKey = hasKey
-    ? `${shareKeyData.openaiApiKey.substring(0, 7)}...${shareKeyData.openaiApiKey.substring(shareKeyData.openaiApiKey.length - 4)}`
-    : null;
-
-  res.json({ hasKey, maskedKey });
-});
-
-// Get GM list
-app.get('/api/user/gms', requireOwner, (req, res) =>
-{
-  const shareKey = req.shareKey;
-
-  if (!shareKey)
-  {
-    return res.json({ gms: [] });
-  }
-
-  const shareKeyData = loadShareKeyData(shareKey);
-
-  res.json({ gms: shareKeyData.gms || [] });
-});
-
-// Add a GM
-app.post('/api/user/gms', requireOwner, (req, res) =>
-{
-  const shareKey = req.shareKey;
-
-  if (!shareKey)
-  {
-    return res.status(400).json({ error: 'No share key selected' });
-  }
-
-  const { email } = req.body;
-
-  if (!email || typeof email !== 'string' || !email.includes('@'))
-  {
-    return res.status(400).json({ error: 'Valid email is required' });
-  }
-
-  const shareKeyData = loadShareKeyData(shareKey);
-  if (!shareKeyData.gms)
-  {
-    shareKeyData.gms = [];
-  }
-
-  // Don't add duplicates
-  if (shareKeyData.gms.includes(email))
-  {
-    return res.status(400).json({ error: 'GM already exists' });
-  }
-
-  shareKeyData.gms.push(email);
-  saveShareKeyData(shareKey, shareKeyData);
-
-  res.json({ gms: shareKeyData.gms });
-});
-
-// Remove a GM
-app.delete('/api/user/gms', requireOwner, (req, res) =>
-{
-  const shareKey = req.shareKey;
-
-  if (!shareKey)
-  {
-    return res.status(400).json({ error: 'No share key selected' });
-  }
-
-  const { email } = req.body;
-
-  if (!email || typeof email !== 'string')
-  {
-    return res.status(400).json({ error: 'Email is required' });
-  }
-
-  const shareKeyData = loadShareKeyData(shareKey);
-  if (!shareKeyData.gms)
-  {
-    shareKeyData.gms = [];
-  }
-
-  shareKeyData.gms = shareKeyData.gms.filter(gm => gm !== email);
-  saveShareKeyData(shareKey, shareKeyData);
-
-  res.json({ gms: shareKeyData.gms });
-});
+// Register user management routes (moved to users.js)
+registerUserRoutes(app, { requireOwner, provideShareKey });
 
 // Campaign Management APIs
 app.get('/api/campaigns', (req, res) =>
 {
   // Allow unauthenticated listing when a shareKey is provided via query or header
-  let shareKey = (req.query && req.query.shareKey) || req.headers['x-share-key'] || (req.user && req.user.currentShareKey) || currentShareKey;
+  let shareKey = (req.query && req.query.shareKey) || req.headers['x-share-key'] || (req.user && req.user.currentShareKey);
   if (shareKey) shareKey = String(shareKey).toLowerCase();
 
   if (!shareKey)
@@ -403,7 +231,7 @@ app.get('/api/campaigns', (req, res) =>
     return res.status(404).json({ error: 'Share key not found' });
   }
 
-  const userCampaignsDir = getShareKeyCampaignsDir(shareKey);
+  const userCampaignsDir = getShareKeyCampaignsDir(shareKey, usersDir);
 
   // Ensure user directory exists when they access campaign screen
   if (!fs.existsSync(userCampaignsDir))
@@ -491,7 +319,7 @@ app.post('/api/campaigns', requireGM, provideShareKey, express.json(), (req, res
     return res.status(400).json({ error: 'No share key selected' });
   }
 
-  const userCampaignsDir = getShareKeyCampaignsDir(shareKey);
+  const userCampaignsDir = getShareKeyCampaignsDir(shareKey, usersDir);
 
   if (!name)
   {
@@ -520,7 +348,7 @@ app.patch('/api/campaigns/:campaignName', requireGM, provideShareKey, express.js
     return res.status(400).json({ error: 'No share key selected' });
   }
 
-  const userCampaignsDir = getShareKeyCampaignsDir(shareKey);
+  const userCampaignsDir = getShareKeyCampaignsDir(shareKey, usersDir);
   const campaignPath = path.join(userCampaignsDir, oldName);
   const metadataPath = path.join(campaignPath, '.metadata.json');
 
@@ -600,8 +428,8 @@ app.delete('/api/campaigns/:campaignName', requireGM, provideShareKey, (req, res
     return res.status(400).json({ error: 'No share key selected' });
   }
 
-  const userCampaignsDir = getShareKeyCampaignsDir(shareKey);
-  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey);
+  const userCampaignsDir = getShareKeyCampaignsDir(shareKey, usersDir);
+  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey, usersDir);
   const campaignPath = path.join(userCampaignsDir, campaignName);
 
   if (!fs.existsSync(campaignPath))
@@ -652,7 +480,7 @@ app.get('/api/archived-campaigns', requireGM, (req, res) =>
     return res.json({ archived: [] });
   }
 
-  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey);
+  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey, usersDir);
 
   fs.readdir(userArchivedDir, (err, files) =>
   {
@@ -696,8 +524,8 @@ app.post('/api/archived-campaigns/:folderName/restore', requireGM, provideShareK
     return res.status(400).json({ error: 'No share key selected' });
   }
 
-  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey);
-  const userCampaignsDir = getShareKeyCampaignsDir(shareKey);
+  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey, usersDir);
+  const userCampaignsDir = getShareKeyCampaignsDir(shareKey, usersDir);
   const archivedPath = path.join(userArchivedDir, folderName);
 
   if (!fs.existsSync(archivedPath))
@@ -738,7 +566,7 @@ app.delete('/api/archived-campaigns/:folderName', requireGM, provideShareKey, (r
     return res.status(400).json({ error: 'No share key selected' });
   }
 
-  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey);
+  const userArchivedDir = getShareKeyArchivedCampaignsDir(shareKey, usersDir);
   const archivedPath = path.join(userArchivedDir, folderName);
 
   if (!fs.existsSync(archivedPath))
@@ -1048,6 +876,7 @@ if (process.env.NODE_ENV === 'production')
   }
 
   // Fix image paths to use share key paths before sending to client
+  const currentShareKey = gamestate.getCurrentShareKey();
   if (currentShareKey)
   {
     gameState.tokens = gameState.tokens.map(token => fixTokenImagePaths(token, currentShareKey));
@@ -1072,7 +901,7 @@ app.get('/api/sessions', requireAuth, (req, res) =>
 
   try
   {
-    const campaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey());
+    const campaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey(), usersDir);
     const campaignPath = path.join(campaignsDir, gamestate.getCurrentCampaign());
     const sessionsPath = path.join(campaignPath, 'sessions');
 
@@ -1115,7 +944,7 @@ app.post('/api/session/start', requireGM, express.json(), (req, res) =>
 
   try
   {
-    const userCampaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey());
+    const userCampaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey(), usersDir);
     const campaignPath = path.join(userCampaignsDir, gamestate.getCurrentCampaign());
     const sessionPath = path.join(campaignPath, 'sessions', sessionName);
     const sessionScenarioPath = path.join(sessionPath, 'scenarios', gamestate.getCurrentScenario());
@@ -1334,7 +1163,7 @@ app.post('/api/session/end', requireGM, express.json(), (req, res) =>
 
   try
   {
-    const campaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey());
+    const campaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey(), usersDir);
     const campaignPath = path.join(campaignsDir, gamestate.getCurrentCampaign());
     const sessionPath = path.join(campaignPath, 'sessions', gamestate.getCurrentSessionName());
 

@@ -78,9 +78,11 @@ export default function AppHeader({ title = 'Campaign Manager', subtitle, campai
               <button onClick={() => navigate('/image-gallery')} className="header-button">
                 Image Gallery
               </button>
-              <button onClick={() => navigate('/settings')} className="header-button">
-                Settings
-              </button>
+              {user.role === 'owner' && (
+                <button onClick={() => navigate('/settings')} className="header-button">
+                  Settings
+                </button>
+              )}
               <button onClick={logout} className="header-button">
                 Logout
               </button>

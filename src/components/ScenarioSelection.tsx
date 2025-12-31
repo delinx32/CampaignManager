@@ -129,10 +129,6 @@ function ScenarioSelection() {
     }
   };
 
-  const handleBack = () => {
-    navigate('/');
-  };
-
   const handleEdit = (e: React.MouseEvent, scenario: Scenario) => {
     e.stopPropagation();
     setEditingScenario(scenario.name);
@@ -315,9 +311,6 @@ function ScenarioSelection() {
         subtitle="Select a scenario to manage" 
       />
       <div className="scenario-content">
-        <button className="back-button" onClick={handleBack}>
-          ← Back to Campaigns
-        </button>
 
       {error && (
         <div className="error-message">

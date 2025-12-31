@@ -18,22 +18,47 @@ A React-based virtual tabletop for D&D games with separate views for GM, observe
 
 ### Authentication System
 
-#### Two User Roles
-1. **GM Role** (Google OAuth)
-   - Users who own or have access to share keys automatically get GM role
-   - Full access to campaign creation, management, and settings
-   - Uses `ProtectedRoute` component
+#### Three User Roles
+1. **Owner Role** (Google OAuth)
+   - Users who own a share key get owner role
+   - All GM permissions PLUS access to settings page
+   - Can manage OpenAI keys and add/remove GMs
+   - Determined by comparing user.id or user.email against ownerId/ownerEmail in .user.json
+   - Uses `OwnerRoute` component for protected owner-only pages
+   - Routes: Settings page, API endpoints for OpenAI key and GM management
 
-2. **Player Role** (Google OAuth)
-   - Users who log in via Google but don't own any share keys get player role
+2. **GM Role** (Google OAuth)
+   - Users who have access to share keys but don't own them get GM role
+   - Full access to campaign creation, management, and GM view
+   - Cannot access settings page or manage share key settings
+   - Can be added to a share key's GMs list by the owner
+   - Uses `ProtectedRoute` component
+   - Routes: Campaign management, scenario selection, GM view, image gallery
+
+3. **Player Role** (Google OAuth)
+   - Users who log in via Google but don't own or have access to any share keys
    - Can access player view after authentication
-   - Cannot access GM features
+   - Cannot access GM or owner features
+
+#### Role Assignment Logic
+- On login, checks all share key `.user.json` files for ownership
+- `isOwner = (data.ownerId === user.id)`
+- If user owns ANY share key → `role = 'owner'`
+- Else if user has access to ANY share key → `role = 'gm'`
+- Else → `role = 'player'`
+- `accessibleShareKeys` array includes isOwner flag for each share key
 
 #### Route Protection
 - **Public Routes**: Observer view, share key landing (no auth required)
 - **Player Routes**: Player view (requires any authenticated user)
-- **GM Routes**: Campaign management, scenario selection, GM view, settings (requires GM role)
-- Uses `ProtectedRoute` for GM access, `ViewerRoute` for player-only access
+- **GM Routes**: Campaign management, scenario selection, GM view, image gallery (requires GM or owner role)
+- **Owner Routes**: Settings page, OpenAI key management, GM list management (requires owner role only)
+- Uses `ProtectedRoute` for GM/owner access, `ViewerRoute` for player-only access, `OwnerRoute` for owner-only access
+
+#### Backend Middleware
+- `requireAuth` - Any authenticated user
+- `requireGM` - GM or owner role (updated to include owners)
+- `requireOwner` - Owner role only (NEW)
 
 #### Share Key Landing Page
 - **Route**: `/:shareKey`
@@ -45,6 +70,8 @@ A React-based virtual tabletop for D&D games with separate views for GM, observe
   - Sorted by last played date
 - **Backend**: 
   - `GET /api/sharekey/:shareKey/sessions` - Returns active campaigns/sessions (public endpoint)
+
+### Component Architecture
 
 ### Component Architecture
 

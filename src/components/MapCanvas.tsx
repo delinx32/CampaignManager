@@ -188,8 +188,15 @@ export default function MapCanvas({ backgroundImage, campaign = '', session = ''
   }, [backgroundImage, tokens, props, transform, fogEnabled, fogRevealDistance, gridCellDistance, playerFogOpacity, lightingCondition, revealedPath, gridColumns, gridRows, showGrid, imageLoaded, currentActorId, showObserverCards, revealZones, permanentlyRevealedZones]);
 
   // Poll backend for changes from players (new tokens or activation changes)
+  // ONLY during active sessions - WebSockets handle real-time updates otherwise
   useEffect(() =>
   {
+    // Don't poll if session is not active
+    if (!isSessionActive)
+    {
+      return;
+    }
+
     const pollGameState = async () =>
     {
       try
@@ -263,8 +270,6 @@ export default function MapCanvas({ backgroundImage, campaign = '', session = ''
             const currentPropIds = new Set(props.map(p => p.id));
             const hasNewProps = state.props.some((p: Prop) => !currentPropIds.has(p.id));
 
-
-
             if (hasNewProps || state.props.length !== props.length)
             {
               skipNextSync.current = true;
@@ -300,7 +305,7 @@ export default function MapCanvas({ backgroundImage, campaign = '', session = ''
 
     const interval = setInterval(pollGameState, 1000);
     return () => clearInterval(interval);
-  }, [tokens, props, currentActorId, showObserverCards, revealZones]);
+  }, [tokens, props, currentActorId, showObserverCards, revealZones, isSessionActive]);
 
   // Load map from backend when background image changes
   useEffect(() =>

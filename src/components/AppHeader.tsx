@@ -72,6 +72,9 @@ export default function AppHeader({ title = 'Campaign Manager', subtitle, campai
                   Campaign Management
                 </button>
               )}
+              <button onClick={() => navigate('/')} className="header-button">
+                Campaigns
+              </button>
               <button onClick={() => navigate('/image-gallery')} className="header-button">
                 Image Gallery
               </button>

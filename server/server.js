@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 import { registerImageRoutes } from './images.js';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
-import { passport, sessionMiddleware, requireAuth, requireGM, isOAuthConfigured, registerAuthRoutes, shareKeyExists, loadShareKeyData, saveShareKeyData } from './auth.js';
+import { passport, sessionMiddleware, requireAuth, requireGM, requireOwner, isOAuthConfigured, registerAuthRoutes, shareKeyExists, loadShareKeyData, saveShareKeyData } from './auth.js';
 
 // Load environment variables from .env file in parent directory
 const __filename = fileURLToPath(import.meta.url);
@@ -59,34 +59,6 @@ const usersDir = path.join(__dirname, 'users');
 
 // POST /api/map-metadata moved to scenario.js
 
-// In-memory game state storage
-let currentCampaign = null;
-let currentScenario = null;
-let currentUserId = null; // Track current user
-let currentShareKey = null; // Track current share key for file paths
-let currentSessionName = null; // Track current session name
-let isSessionActive = false; // Track if we're in game mode
-let gameState = {
-  backgroundImage: null,
-  tokens: [],
-  props: [],
-  transform: { x: 0, y: 0, scale: 1, rotation: 0 },
-  fogEnabled: 'off-gm',
-  fogRevealDistance: 3,
-  playerFogOpacity: 1,
-  lightingCondition: 'bright',
-  revealedPath: [],
-  gridColumns: 100,
-  gridRows: 100,
-  showGrid: true,
-  imageDimensions: null,
-  currentActorId: null,
-  showObserverCards: true
-};
-
-// Track player heartbeats
-const playerHeartbeats = new Map(); // tokenId -> timestamp
-
 // ===========================
 // WebSocket Management
 // ===========================
@@ -95,16 +67,22 @@ const playerHeartbeats = new Map(); // tokenId -> timestamp
 // Format: { "campaignName/sessionName": Set<WebSocket> }
 import { sessionConnections, broadcast } from './sessions.js';
 
+// Game state management module
+import * as gamestate from './gamestate.js';
+import { saveScenarioGameState, loadScenarioGameState, loadProps } from './gamestate.js';
+
 // Token utilities (module) - set context early so other helpers can use it
 import * as tokens from './tokens.js';
 import { fixTokenImagePaths } from './tokens.js';
 import * as scenario from './scenario.js';
+import { saveMapMetadata } from './scenario.js';
+
 tokens.setContext({
-  getCurrentCampaign: () => currentCampaign,
-  getCurrentScenario: () => currentScenario,
-  getCurrentShareKey: () => currentShareKey,
-  isSessionActive: () => isSessionActive,
-  getCurrentSessionName: () => currentSessionName,
+  getCurrentCampaign: () => gamestate.getCurrentCampaign(),
+  getCurrentScenario: () => gamestate.getCurrentScenario(),
+  getCurrentShareKey: () => gamestate.getCurrentShareKey(),
+  isSessionActive: () => gamestate.isActiveSession(),
+  getCurrentSessionName: () => gamestate.getCurrentSessionName(),
   getShareKeyCampaignsDir,
   fs,
   path
@@ -115,11 +93,11 @@ tokens.setContext({
 // ===========================
 // Now that game state variables are initialized, register auth routes
 registerAuthRoutes(app, {
-  currentShareKey: () => currentShareKey,
-  currentCampaign: () => currentCampaign,
-  currentSessionName: () => currentSessionName,
-  currentScenario: () => currentScenario,
-  isSessionActive: () => isSessionActive,
+  currentShareKey: () => gamestate.getCurrentShareKey(),
+  currentCampaign: () => gamestate.getCurrentCampaign(),
+  currentSessionName: () => gamestate.getCurrentSessionName(),
+  currentScenario: () => gamestate.getCurrentScenario(),
+  isSessionActive: () => gamestate.isActiveSession(),
   usersDir
 });
 
@@ -134,188 +112,31 @@ registerImageRoutes(app, {
   __dirname
 });
 
-// Token functions are called directly from tokens module (no local bindings needed)
+// Start heartbeat monitoring
+gamestate.startHeartbeatMonitor();
 
-// Auto-deactivate players that haven't sent heartbeat in 10 seconds
-setInterval(() =>
+// Register gamestate context helpers
+gamestate.setContext({
+  tokens,
+  saveMapMetadata,
+  getShareKeyCampaignsDir,
+  usersDir
+});
+
+// Register game state API endpoints
+if (typeof gamestate.registerRoutes === 'function')
 {
-  const now = Date.now();
-  const timeout = 10000; // 10 seconds
-  let anyChanges = false;
-
-  gameState.tokens.forEach(token =>
-  {
-    if (token.actor?.player && token.active)
-    {
-      const lastSeen = playerHeartbeats.get(token.id);
-      // Only deactivate if there's a heartbeat entry AND it's stale
-      // Don't deactivate tokens that have never sent a heartbeat (they might just be loading)
-      if (lastSeen && (now - lastSeen) > timeout)
-      {
-        console.log('Auto-deactivating stale player:', token.id, token.actor.name);
-        token.active = false;
-        anyChanges = true;
-
-        // Save player token immediately
-        tokens.savePlayerToken(token);
-      }
-    }
+  gamestate.registerRoutes(app, {
+    express,
+    requireGM,
+    fixTokenImagePaths
   });
-
-  // Save scenario state if any changes occurred
-  if (anyChanges)
-  {
-    saveScenarioGameState(gameState);
-    console.log('Saved updated game state after auto-deactivation');
-  }
-}, 5000); // Check every 5 seconds
-
-// Helper function to get scenario game state file path
-function getScenarioGameStatePath()
-{
-  if (!currentCampaign || !currentScenario || !currentShareKey) return null;
-  const userCampaignsDir = getShareKeyCampaignsDir(currentShareKey);
-
-  if (isSessionActive && currentSessionName)
-  {
-    // Session files are at campaign level, with scenarios subfolder
-    const campaignPath = path.join(userCampaignsDir, currentCampaign);
-    const sessionPath = path.join(campaignPath, 'sessions', currentSessionName, 'scenarios', currentScenario);
-    return path.join(sessionPath, '.runtime-state.json');
-  }
-
-  const scenarioPath = path.join(userCampaignsDir, currentCampaign, 'scenarios', currentScenario);
-  return path.join(scenarioPath, '.scenario-state.json');
 }
-
-// Helper function to load scenario game state from file
-function loadScenarioGameState()
-{
-  const statePath = getScenarioGameStatePath();
-  if (!statePath || !fs.existsSync(statePath))
-  {
-    return null;
-  }
-
-  try
-  {
-    const data = fs.readFileSync(statePath, 'utf-8');
-    const scenarioState = JSON.parse(data);
-
-    // Convert old image paths to sharekey-based paths
-    if (scenarioState.backgroundImage && scenarioState.backgroundImage.startsWith('/images/'))
-    {
-      scenarioState.backgroundImage = `/users/${currentShareKey}${scenarioState.backgroundImage}`;
-    }
-
-    // Load player tokens from campaign directory and NPC tokens from scenario directory
-    const playerTokens = tokens.loadPlayerTokens();
-    const npcTokens = tokens.loadNPCTokens();
-    const props = loadProps();
-
-    // Merge all tokens (players + NPCs) and props
-    scenarioState.tokens = [...playerTokens, ...npcTokens];
-    scenarioState.props = props;
-
-    // Ensure revealZones and permanentlyRevealedZones exist
-    if (!scenarioState.revealZones)
-    {
-      scenarioState.revealZones = [];
-    }
-    if (!scenarioState.permanentlyRevealedZones)
-    {
-      scenarioState.permanentlyRevealedZones = [];
-    }
-
-    return scenarioState;
-  } catch (error)
-  {
-    console.error('Failed to load scenario game state:', error);
-    return null;
-  }
-}
-
-// Helper function to save scenario game state to file
-function saveScenarioGameState(state)
-{
-  if (!currentCampaign || !currentScenario || !currentShareKey) return;
-
-  const campaignsDir = getShareKeyCampaignsDir(currentShareKey);
-  const scenarioPath = path.join(campaignsDir, currentCampaign, 'scenarios', currentScenario);
-  const definitionPath = path.join(scenarioPath, '.scenario-state.json');
-
-  try
-  {
-    // Filter out tokens and props - they're saved separately
-    const stateToSave = {
-      ...state,
-      tokens: [], // All tokens stored in separate files
-      props: [] // All props stored in separate files
-    };
-
-    // Strip API URL prefix and sharekey prefix from backgroundImage before saving
-    if (stateToSave.backgroundImage)
-    {
-      // Remove any http://localhost:3001 or similar prefixes
-      let cleanPath = stateToSave.backgroundImage.replace(/^(https?:\/\/[^\/]+)+/g, '');
-      // Strip sharekey prefix to store in old format
-      if (cleanPath.startsWith(`/users/${currentShareKey}/`))
-      {
-        cleanPath = cleanPath.replace(`/users/${currentShareKey}`, '');
-      }
-      stateToSave.backgroundImage = cleanPath;
-    }
-
-    console.log('saveScenarioGameState: Saving fogEnabled =', stateToSave.fogEnabled);
-
-    if (isSessionActive && currentSessionName)
-    {
-      // GAME MODE: Save ONLY to session folder (new structure: campaign/sessions/[session]/scenarios/[scenario])
-      const campaignPath = path.join(campaignsDir, currentCampaign);
-      const sessionPath = path.join(campaignPath, 'sessions', currentSessionName, 'scenarios', currentScenario);
-      const runtimePath = path.join(sessionPath, '.runtime-state.json');
-      console.log('saveScenarioGameState: GAME MODE - saving to:', runtimePath);
-      if (!fs.existsSync(sessionPath))
-      {
-        fs.mkdirSync(sessionPath, { recursive: true });
-      }
-      fs.writeFileSync(runtimePath, JSON.stringify(stateToSave, null, 2));
-      console.log('saveScenarioGameState: GAME MODE - file written successfully with fogEnabled =', stateToSave.fogEnabled);
-    } else
-    {
-      // EDIT MODE: Save to definition, preserving lastSessionPlayed
-      console.log('saveScenarioGameState: EDIT MODE - saving to scenario definition');
-      let existingData = {};
-      if (fs.existsSync(definitionPath))
-      {
-        existingData = JSON.parse(fs.readFileSync(definitionPath, 'utf-8'));
-      }
-
-      const finalState = {
-        ...stateToSave,
-        lastSessionPlayed: existingData.lastSessionPlayed // Preserve lastSessionPlayed
-      };
-      fs.writeFileSync(definitionPath, JSON.stringify(finalState, null, 2));
-      console.log('saveScenarioGameState: EDIT MODE - file written to:', definitionPath);
-
-      // Also save map metadata (fog settings, reveal zones, etc.)
-      saveMapMetadata(state);
-    }
-  } catch (error)
-  {
-    console.error('Failed to save scenario game state:', error);
-  }
-}
-
-// saveMapMetadata function moved to scenario.js
-
-// Token helpers are initialized earlier and provided by `server/tokens.js`
-// Local bindings were declared above; no-op here to avoid redeclaration
 
 // Register token-related HTTP endpoints from tokens module
 if (typeof tokens.registerRoutes === 'function')
 {
-  tokens.registerRoutes(app, { gameState, saveScenarioGameState });
+  tokens.registerRoutes(app, { gameState: gamestate.getGameState, saveScenarioGameState });
 }
 
 // Register scenario-related HTTP endpoints from scenario module
@@ -327,12 +148,12 @@ if (typeof scenario.registerRoutes === 'function')
     provideShareKey,
     getShareKeyCampaignsDir,
     getShareKeyArchivedCampaignsDir,
-    gameState,
+    gameState: gamestate.getGameState,
     loadScenarioGameState,
     saveScenarioGameState,
     loadPlayerTokens: tokens.loadPlayerTokens,
     loadNPCTokens: tokens.loadNPCTokens,
-    loadProps,
+    loadProps: gamestate.loadProps,
     fixTokenImagePaths,
     express
   });
@@ -347,132 +168,7 @@ if (typeof scenario.registerRoutes === 'function')
 // NPC token loading/saving moved to `server/tokens.js`
 // See: server/tokens.js:loadNPCTokens, saveNPCToken, deleteNPCToken
 
-// Helper function to save a prop to scenario directory
-function saveProp(prop)
-{
-  if (!currentCampaign || !currentScenario || !currentShareKey) return;
-
-  const campaignsDir = getShareKeyCampaignsDir(currentShareKey);
-  const scenarioPath = path.join(campaignsDir, currentCampaign, 'scenarios', currentScenario);
-  const definitionPath = path.join(scenarioPath, 'props');
-
-  try
-  {
-    // Clone prop and strip sharekey prefix from image paths before saving
-    const propToSave = { ...prop };
-    if (propToSave.imageUrl && propToSave.imageUrl.startsWith(`/users/${currentShareKey}/`))
-    {
-      propToSave.imageUrl = propToSave.imageUrl.replace(`/users/${currentShareKey}`, '');
-    }
-
-    // Also process states array for image URLs
-    if (propToSave.states && Array.isArray(propToSave.states))
-    {
-      propToSave.states = propToSave.states.map(state => ({
-        ...state,
-        imageUrl: state.imageUrl && state.imageUrl.startsWith(`/users/${currentShareKey}/`)
-          ? state.imageUrl.replace(`/users/${currentShareKey}`, '')
-          : state.imageUrl
-      }));
-    }
-
-    if (isSessionActive && currentSessionName)
-    {
-      // GAME MODE: Save ONLY to session folder (new structure: campaign/sessions/[session]/scenarios/[scenario])
-      const campaignPath = path.join(campaignsDir, currentCampaign);
-      const sessionPath = path.join(campaignPath, 'sessions', currentSessionName, 'scenarios', currentScenario);
-      const runtimePath = path.join(sessionPath, 'props');
-      if (!fs.existsSync(runtimePath))
-      {
-        fs.mkdirSync(runtimePath, { recursive: true });
-      }
-      const propPath = path.join(runtimePath, `${prop.id}.json`);
-      fs.writeFileSync(propPath, JSON.stringify(propToSave, null, 2));
-    } else
-    {
-      // EDIT MODE: Save to definition
-      if (!fs.existsSync(definitionPath))
-      {
-        fs.mkdirSync(definitionPath, { recursive: true });
-      }
-      const propPath = path.join(definitionPath, `${prop.id}.json`);
-      fs.writeFileSync(propPath, JSON.stringify(propToSave, null, 2));
-    }
-  } catch (error)
-  {
-    console.error('Failed to save prop:', error);
-  }
-}
-
-// Helper to load props from scenario or session directory
-function loadProps()
-{
-  if (!currentCampaign || !currentScenario || !currentShareKey) return [];
-  const campaignsDir = getShareKeyCampaignsDir(currentShareKey);
-  const scenarioPath = path.join(campaignsDir, currentCampaign, 'scenarios', currentScenario);
-  let propsPath = path.join(scenarioPath, 'props');
-
-  if (isSessionActive && currentSessionName)
-  {
-    const campaignPath = path.join(campaignsDir, currentCampaign);
-    const sessionPath = path.join(campaignPath, 'sessions', currentSessionName, 'scenarios', currentScenario);
-    propsPath = path.join(sessionPath, 'props');
-    // If runtime props folder doesn't exist but definition exists, copy defaults
-    const defPath = path.join(scenarioPath, 'props');
-    if (!fs.existsSync(propsPath) && fs.existsSync(defPath))
-    {
-      fs.mkdirSync(propsPath, { recursive: true });
-      const files = fs.readdirSync(defPath).filter(f => f.endsWith('.json'));
-      for (const f of files) {
-        fs.copyFileSync(path.join(defPath, f), path.join(propsPath, f));
-      }
-    }
-  }
-
-  if (!fs.existsSync(propsPath)) return [];
-  try {
-    const files = fs.readdirSync(propsPath);
-    const props = [];
-    for (const file of files) {
-      if (!file.endsWith('.json')) continue;
-      try {
-        const data = fs.readFileSync(path.join(propsPath, file), 'utf-8');
-        const item = JSON.parse(data);
-        // Fix image paths
-        if (item.imageUrl && item.imageUrl.startsWith('/images/')) item.imageUrl = `/users/${currentShareKey}${item.imageUrl}`;
-        if (item.states && Array.isArray(item.states)) {
-          item.states = item.states.map(s => ({ ...s, imageUrl: s.imageUrl && s.imageUrl.startsWith('/images/') ? `/users/${currentShareKey}${s.imageUrl}` : s.imageUrl }));
-        }
-        props.push(item);
-      } catch (err) {
-        console.error('Failed to load prop file', file, err);
-      }
-    }
-    return props;
-  } catch (err) {
-    console.error('Failed to load props:', err);
-    return [];
-  }
-}
-
-// Helper function to delete a prop from scenario directory
-function deleteProp(propId)
-{
-  const propsPath = getPropsPath();
-  if (!propsPath) return;
-
-  try
-  {
-    const propPath = path.join(propsPath, `${propId}.json`);
-    if (fs.existsSync(propPath))
-    {
-      fs.unlinkSync(propPath);
-    }
-  } catch (error)
-  {
-    console.error('Failed to delete prop:', error);
-  }
-}
+// Props management moved to gamestate.js
 
 // Helper function to get share key's campaigns directory
 function getShareKeyCampaignsDir(shareKey)
@@ -488,11 +184,11 @@ function getShareKeyCampaignsDir(shareKey)
 // Initialize scenarioState module and provide runtime getters/helpers
 import * as scenarioState from './scenarioState.js';
 scenarioState.setContext({
-  getCurrentCampaign: () => currentCampaign,
-  getCurrentScenario: () => currentScenario,
-  getCurrentShareKey: () => currentShareKey,
-  isSessionActive: () => isSessionActive,
-  getCurrentSessionName: () => currentSessionName,
+  getCurrentCampaign: () => gamestate.getCurrentCampaign(),
+  getCurrentScenario: () => gamestate.getCurrentScenario(),
+  getCurrentShareKey: () => gamestate.getCurrentShareKey(),
+  isSessionActive: () => gamestate.isActiveSession(),
+  getCurrentSessionName: () => gamestate.getCurrentSessionName(),
   getShareKeyCampaignsDir,
   loadPlayerTokens: tokens.loadPlayerTokens,
   loadNPCTokens: tokens.loadNPCTokens,
@@ -503,26 +199,21 @@ scenarioState.setContext({
   saveMapMetadata
 });
 
-// Override local function references to use scenarioState implementations
-loadScenarioGameState = scenarioState.loadScenarioGameState;
-saveScenarioGameState = scenarioState.saveScenarioGameState;
-getScenarioGameStatePath = scenarioState.getScenarioGameStatePath;
-
 // Initialize scenario module
 scenario.setContext({
-  getCurrentCampaign: () => currentCampaign,
-  getCurrentScenario: () => currentScenario,
-  getCurrentShareKey: () => currentShareKey,
-  isSessionActive: () => isSessionActive,
-  getCurrentSessionName: () => currentSessionName,
-  setCurrentCampaign: (val) => { currentCampaign = val; },
-  setCurrentScenario: (val) => { currentScenario = val; },
-  setCurrentUserId: (val) => { currentUserId = val; },
-  setCurrentShareKey: (val) => { currentShareKey = val; },
-  setCurrentSessionName: (val) => { currentSessionName = val; },
+  getCurrentCampaign: () => gamestate.getCurrentCampaign(),
+  getCurrentScenario: () => gamestate.getCurrentScenario(),
+  getCurrentShareKey: () => gamestate.getCurrentShareKey(),
+  isSessionActive: () => gamestate.isActiveSession(),
+  getCurrentSessionName: () => gamestate.getCurrentSessionName(),
+  setCurrentCampaign: (val) => { gamestate.setCurrentCampaign(val); },
+  setCurrentScenario: (val) => { gamestate.setCurrentScenario(val); },
+  setCurrentUserId: (val) => { /* no setter in gamestate */ },
+  setCurrentShareKey: (val) => { gamestate.setCurrentShareKey(val); },
+  setCurrentSessionName: (val) => { gamestate.setCurrentSessionName(val); },
   getShareKeyCampaignsDir,
-  getGameState: () => gameState,
-  setGameState: (state) => { gameState = state; }
+  getGameState: () => gamestate.getGameState(),
+  setGameState: (state) => gamestate.setGameState(state)
 });
 
 // Helper function to get share key's archived campaigns directory
@@ -559,38 +250,14 @@ function provideShareKey(req, res, next)
   return next();
 }
 
-// Helper functions are provided by auth.js (share-key data helpers).
-// Legacy wrappers were removed; callers updated to use share-key helpers directly.
 
-function getAllUserKeys()
-{
-  const keys = new Map(); // Map of key -> userId
-  if (!fs.existsSync(usersDir)) return keys;
-
-  const userDirs = fs.readdirSync(usersDir).filter(file =>
-  {
-    const stat = fs.statSync(path.join(usersDir, file));
-    return stat.isDirectory();
-  });
-
-  for (const userId of userDirs)
-  {
-    const userData = loadShareKeyData(userId);
-    if (userData.key)
-    {
-      keys.set(userData.key, userId);
-    }
-  }
-
-  return keys;
-}
 
 // Share Key Management APIs are now handled by the auth module
 // (See auth.js for registerAuthRoutes)
 
 // User Management APIs (deprecated /api/user/key endpoint removed - use share keys instead)
 
-app.patch('/api/user/openai-key', requireGM, express.json(), (req, res) =>
+app.patch('/api/user/openai-key', requireOwner, express.json(), (req, res) =>
 {
   const shareKey = req.shareKey;
 
@@ -620,7 +287,7 @@ app.patch('/api/user/openai-key', requireGM, express.json(), (req, res) =>
   res.json({ success: true });
 });
 
-app.get('/api/user/openai-key', requireGM, (req, res) =>
+app.get('/api/user/openai-key', requireOwner, (req, res) =>
 {
   const shareKey = req.shareKey;
 
@@ -641,7 +308,7 @@ app.get('/api/user/openai-key', requireGM, (req, res) =>
 });
 
 // Get GM list
-app.get('/api/user/gms', requireGM, (req, res) =>
+app.get('/api/user/gms', requireOwner, (req, res) =>
 {
   const shareKey = req.shareKey;
 
@@ -656,7 +323,7 @@ app.get('/api/user/gms', requireGM, (req, res) =>
 });
 
 // Add a GM
-app.post('/api/user/gms', requireGM, (req, res) =>
+app.post('/api/user/gms', requireOwner, (req, res) =>
 {
   const shareKey = req.shareKey;
 
@@ -691,7 +358,7 @@ app.post('/api/user/gms', requireGM, (req, res) =>
 });
 
 // Remove a GM
-app.delete('/api/user/gms', requireGM, (req, res) =>
+app.delete('/api/user/gms', requireOwner, (req, res) =>
 {
   const shareKey = req.shareKey;
 
@@ -1102,45 +769,40 @@ app.delete('/api/archived-campaigns/:folderName', requireGM, provideShareKey, (r
 
 // POST /api/load-map moved to scenario.js
 
-// Get current game state (with optional session parameter for observer/player views)
-app.get('/api/game-state', (req, res) =>
+// ===========================
+// Game State API Endpoints
+// ===========================
+// All game state related API endpoints are now registered by gamestate.registerRoutes()
+// Includes:
+// - GET /api/game-state
+// - POST /api/game-state
+// - POST /api/player-heartbeat
+// - POST /api/deactivate-token
+// - POST /api/update-prop-state
+// - POST /api/update-revealed-path
+
+// Serve uploaded images from server's file system (legacy)
+app.use('/images', express.static(path.join(__dirname, 'images')));
+
+// Serve user-specific images from share key folders
+app.use('/users', express.static(path.join(__dirname, 'users')));
+
+// Serve static files from the React app (production)
+if (process.env.NODE_ENV === 'production')
 {
-  const { session, campaign } = req.query;
+  app.use(express.static(path.join(__dirname, '..', 'dist')));
 
-  // If campaign and session parameters provided, load from session metadata
-  if (campaign && session)
+  // Handle React routing, return all requests to React app
+  app.get('*', (req, res) =>
   {
-    try
-    {
-      // Observer view is public - try to get shareKey from user if authenticated,
-      // otherwise look it up by searching share key directories
-      let shareKey = req.user?.currentShareKey;
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  });
+}
 
-      if (!shareKey)
-      {
-        // Public access - need to find which share key directory contains this campaign
-        const shareKeyDirs = fs.readdirSync(path.join(__dirname, 'users'));
-        for (const dir of shareKeyDirs)
-        {
-          // Skip special directories like 'sessions'
-          if (dir === 'sessions') continue;
-
-          const shareKeyPath = path.join(__dirname, 'users', dir);
-          const campaignsPath = path.join(shareKeyPath, 'campaigns', campaign);
-          if (fs.existsSync(campaignsPath))
-          {
-            // Found the campaign - dir is the share key
-            shareKey = dir;
-            break;
-          }
-        }
-
-        if (!shareKey)
-        {
-          return res.status(404).json({ error: 'Campaign not found' });
-        }
-      }
-      const campaignsDir = getShareKeyCampaignsDir(shareKey);
+// ===========================
+// Orphaned Code Below - Delete When Cleaning Up
+// ===========================
+/*
       const campaignPath = path.join(campaignsDir, campaign);
       const sessionPath = path.join(campaignPath, 'sessions', session);
       const sessionMetadataPath = path.join(sessionPath, '.session-metadata.json');
@@ -1394,21 +1056,24 @@ app.get('/api/game-state', (req, res) =>
 
   res.json({ state: gameState, sessionActive: isSessionActive });
 });
+*/
 
-// GET /api/scenario-metadata moved to scenario.js
+// ===========================
+// Session Management Endpoints
+// ===========================
 
 // List available sessions for current campaign (campaign-wide, not scenario-specific)
 app.get('/api/sessions', requireAuth, (req, res) =>
 {
-  if (!currentCampaign || !currentShareKey)
+  if (!gamestate.getCurrentCampaign() || !gamestate.getCurrentShareKey())
   {
     return res.json({ sessions: [] });
   }
 
   try
   {
-    const campaignsDir = getShareKeyCampaignsDir(currentShareKey);
-    const campaignPath = path.join(campaignsDir, currentCampaign);
+    const campaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey());
+    const campaignPath = path.join(campaignsDir, gamestate.getCurrentCampaign());
     const sessionsPath = path.join(campaignPath, 'sessions');
 
     if (!fs.existsSync(sessionsPath))
@@ -1432,12 +1097,12 @@ app.get('/api/sessions', requireAuth, (req, res) =>
 // Sessions are now campaign-wide and track which scenario they're on
 app.post('/api/session/start', requireGM, express.json(), (req, res) =>
 {
-  if (!currentCampaign || !currentScenario || !currentShareKey)
+  if (!gamestate.getCurrentCampaign() || !gamestate.getCurrentScenario() || !gamestate.getCurrentShareKey())
   {
     return res.status(400).json({ error: 'No campaign/scenario context set' });
   }
 
-  if (isSessionActive)
+  if (gamestate.isActiveSession())
   {
     return res.status(400).json({ error: 'Session already active' });
   }
@@ -1450,11 +1115,11 @@ app.post('/api/session/start', requireGM, express.json(), (req, res) =>
 
   try
   {
-    const userCampaignsDir = getShareKeyCampaignsDir(currentShareKey);
-    const campaignPath = path.join(userCampaignsDir, currentCampaign);
+    const userCampaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey());
+    const campaignPath = path.join(userCampaignsDir, gamestate.getCurrentCampaign());
     const sessionPath = path.join(campaignPath, 'sessions', sessionName);
-    const sessionScenarioPath = path.join(sessionPath, 'scenarios', currentScenario);
-    const scenarioPath = path.join(userCampaignsDir, currentCampaign, 'scenarios', currentScenario);
+    const sessionScenarioPath = path.join(sessionPath, 'scenarios', gamestate.getCurrentScenario());
+    const scenarioPath = path.join(userCampaignsDir, gamestate.getCurrentCampaign(), 'scenarios', gamestate.getCurrentScenario());
 
     // Check if session already exists
     const sessionExists = fs.existsSync(sessionPath);
@@ -1467,7 +1132,7 @@ app.post('/api/session/start', requireGM, express.json(), (req, res) =>
 
       // Create session metadata to track current scenario
       const sessionMetadata = {
-        currentScenario: currentScenario,
+        currentScenario: gamestate.getCurrentScenario(),
         createdAt: new Date().toISOString(),
         lastPlayed: new Date().toISOString()
       };
@@ -1630,27 +1295,27 @@ app.post('/api/session/start', requireGM, express.json(), (req, res) =>
       }
 
       // Update session metadata with current scenario
-      sessionMetadata.currentScenario = currentScenario;
+      sessionMetadata.currentScenario = gamestate.getCurrentScenario();
       sessionMetadata.lastPlayed = new Date().toISOString();
       fs.writeFileSync(sessionMetadataPath, JSON.stringify(sessionMetadata, null, 2));
-      console.log('Loading session:', sessionName, 'on scenario:', currentScenario);
+      console.log('Loading session:', sessionName, 'on scenario:', gamestate.getCurrentScenario());
     }
 
-    currentSessionName = sessionName;
-    isSessionActive = true; // Set to true for session mode
+    gamestate.setCurrentSessionName(sessionName);
+    gamestate.setSessionActive(true);
 
     // Reload game state from session files
     const loadedState = loadScenarioGameState();
     if (loadedState)
     {
-      gameState = loadedState;
-      console.log('Loaded session state - showObserverCards:', gameState.showObserverCards);
+      gamestate.setGameState(loadedState);
+      console.log('Loaded session state - showObserverCards:', loadedState.showObserverCards);
     } else
     {
       console.log('Warning: No state loaded from session files');
     }
 
-    console.log('Game session started:', sessionName, 'for', currentCampaign, currentScenario);
+    console.log('Game session started:', sessionName, 'for', gamestate.getCurrentCampaign(), gamestate.getCurrentScenario());
     res.json({ success: true, isSessionActive: true, sessionName });
   } catch (err)
   {
@@ -1662,20 +1327,20 @@ app.post('/api/session/start', requireGM, express.json(), (req, res) =>
 // End a game session (keep session files for later, just deactivate and switch to edit mode)
 app.post('/api/session/end', requireGM, express.json(), (req, res) =>
 {
-  if (!isSessionActive)
+  if (!gamestate.isActiveSession())
   {
     return res.status(400).json({ error: 'No active session' });
   }
 
   try
   {
-    const campaignsDir = getShareKeyCampaignsDir(currentShareKey);
-    const campaignPath = path.join(campaignsDir, currentCampaign);
-    const sessionPath = path.join(campaignPath, 'sessions', currentSessionName);
+    const campaignsDir = getShareKeyCampaignsDir(gamestate.getCurrentShareKey());
+    const campaignPath = path.join(campaignsDir, gamestate.getCurrentCampaign());
+    const sessionPath = path.join(campaignPath, 'sessions', gamestate.getCurrentSessionName());
 
     // Read session metadata to get current scenario
     const metadataPath = path.join(sessionPath, '.session-metadata.json');
-    let sessionScenario = currentScenario;
+    let sessionScenario = gamestate.getCurrentScenario();
     if (fs.existsSync(metadataPath))
     {
       const sessionMetadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
@@ -1709,23 +1374,23 @@ app.post('/api/session/end', requireGM, express.json(), (req, res) =>
       fs.writeFileSync(sessionMetadataPath, JSON.stringify(sessionMetadata, null, 2));
     }
 
-    const endedSessionName = currentSessionName;
-    isSessionActive = false;
-    currentSessionName = null;
+    const endedSessionName = gamestate.getCurrentSessionName();
+    gamestate.setSessionActive(false);
+    gamestate.setCurrentSessionName(null);
 
     // Reload game state from definition files for editing
     const loadedState = loadScenarioGameState();
     if (loadedState)
     {
-      gameState = loadedState;
-      console.log('Game state reloaded from definition files for editing, tokens:', gameState.tokens.length);
+      gamestate.setGameState(loadedState);
+      console.log('Game state reloaded from definition files for editing, tokens:', loadedState.tokens.length);
     }
 
-    console.log('Game session ended:', endedSessionName, 'for', currentCampaign, currentScenario);
+    console.log('Game session ended:', endedSessionName, 'for', gamestate.getCurrentCampaign(), gamestate.getCurrentScenario());
     res.json({
       success: true,
       isSessionActive: false,
-      gameState: gameState
+      gameState: gamestate.getGameState()
     });
   } catch (err)
   {
@@ -1738,96 +1403,51 @@ app.post('/api/session/end', requireGM, express.json(), (req, res) =>
 app.get('/api/session/status', (req, res) =>
 {
   res.json({
-    isSessionActive,
-    sessionName: currentSessionName
+    isSessionActive: gamestate.isActiveSession(),
+    sessionName: gamestate.getCurrentSessionName()
   });
 });
 
 // Update game state (and save to map JSON)
-app.post('/api/game-state', requireGM, express.json(), (req, res) =>
-{
+app.post('/api/game-state', requireGM, express.json(), (req, res) => {
   const { state } = req.body;
 
-  if (!state)
-  {
+  if (!state) {
     return res.status(400).json({ error: 'State required' });
   }
 
-  console.log('Server: POST /api/game-state received, fogEnabled =', state.fogEnabled, 'isSessionActive =', isSessionActive, 'currentSessionName =', currentSessionName);
-
-  // Update in-memory state (last write wins)
+  // Update in-memory state
   gameState = { ...state };
 
-  // Separate player tokens from NPC tokens
+  // Separate tokens and save
   const playerTokens = gameState.tokens.filter(t => t.actor?.player);
   const npcTokens = gameState.tokens.filter(t => !t.actor?.player);
 
-  // Get existing tokens from disk
-  const existingPlayerTokens = tokens.loadPlayerTokens();
-  const existingNPCTokens = tokens.loadNPCTokens();
-
-  // Save current player tokens individually to campaign directory
-  for (const playerToken of playerTokens)
-  {
+  for (const playerToken of playerTokens) {
     tokens.savePlayerToken(playerToken);
   }
 
-  // Save current NPC tokens individually to scenario directory
-  for (const npcToken of npcTokens)
-  {
+  for (const npcToken of npcTokens) {
     tokens.saveNPCToken(npcToken);
   }
 
-  // DISABLED: Don't auto-delete tokens on every sync
-  // The frontend may not have all tokens loaded yet, so we shouldn't delete
-  // Tokens should only be deleted via explicit delete actions
-  /*
-  // Delete any player tokens that exist on disk but not in current state
-  const currentPlayerIds = new Set(playerTokens.map(t => t.id));
-  for (const existingToken of existingPlayerTokens)
-  {
-    if (!currentPlayerIds.has(existingToken.id))
-    {
-      console.log('DELETING player token that is not in current state:', existingToken.id, existingToken.actor?.name);
-      deletePlayerToken(existingToken.id);
-    }
-  }
-
-  // Delete any NPC tokens that exist on disk but not in current state
-  const currentNPCIds = new Set(npcTokens.map(t => t.id));
-  for (const existingToken of existingNPCTokens)
-  {
-    if (!currentNPCIds.has(existingToken.id))
-    {
-      console.log('DELETING NPC token that is not in current state:', existingToken.id, existingToken.actor?.name);
-      deleteNPCToken(existingToken.id);
-    }
-  }
-  */
-
   // Handle props if they exist in state
-  if (gameState.props && Array.isArray(gameState.props))
-  {
+  if (gameState.props && Array.isArray(gameState.props)) {
     const existingProps = loadProps();
 
-    // Save current props individually to scenario directory
-    for (const prop of gameState.props)
-    {
+    for (const prop of gameState.props) {
       saveProp(prop);
     }
 
-    // Delete any props that exist on disk but not in current state
     const currentPropIds = new Set(gameState.props.map(p => p.id));
-    for (const existingProp of existingProps)
-    {
-      if (!currentPropIds.has(existingProp.id))
-      {
+    for (const existingProp of existingProps) {
+      if (!currentPropIds.has(existingProp.id)) {
         deleteProp(existingProp.id);
       }
     }
   }
 
-  // Save scenario-level game state (tokens now stored separately)
+  // Save scenario-level game state
   saveScenarioGameState(gameState);
 
   res.json({ success: true });
@@ -1986,12 +1606,6 @@ app.post('/api/update-revealed-path', express.json(), (req, res) =>
 
   res.json({ success: true, revealedPath });
 });
-
-// Serve uploaded images from server's file system (legacy)
-app.use('/images', express.static(path.join(__dirname, 'images')));
-
-// Serve user-specific images from share key folders
-app.use('/users', express.static(path.join(__dirname, 'users')));
 
 // Serve static files from the React app (production)
 if (process.env.NODE_ENV === 'production')

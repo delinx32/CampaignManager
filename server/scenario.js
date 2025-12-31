@@ -18,7 +18,7 @@ export function setContext(ctx) {
 /**
  * Helper function to save map metadata (fog settings, reveal zones, etc.)
  */
-function saveMapMetadata(state) {
+export function saveMapMetadata(state) {
   if (!context.getCurrentCampaign() || !context.getCurrentScenario() || !context.getCurrentShareKey()) {
     return;
   }
@@ -40,7 +40,14 @@ function saveMapMetadata(state) {
     }
 
     // Update metadata with current state values
-    metadata.backgroundImage = state.backgroundImage;
+    // Strip API_URL prefix from backgroundImage if present
+    let backgroundImageToSave = state.backgroundImage;
+    if (backgroundImageToSave && backgroundImageToSave.startsWith('http')) {
+      // Remove 'http://localhost:3001' prefix and keep just the path
+      backgroundImageToSave = backgroundImageToSave.replace(/^https?:\/\/[^/]+/, '');
+    }
+    
+    metadata.backgroundImage = backgroundImageToSave;
     metadata.fogEnabled = state.fogEnabled;
     metadata.fogRevealDistance = state.fogRevealDistance;
     metadata.lightingCondition = state.lightingCondition;
@@ -103,7 +110,7 @@ export function registerRoutes(app, dependencies) {
         // Convert old image paths to sharekey-based paths
         if (metadata.backgroundImage) {
           if (metadata.backgroundImage.startsWith('/images/')) {
-            metadata.backgroundImage = `/users/${req.shareKey}${metadata.backgroundImage}`;
+            campaignBackgroundImage = `/users/${req.shareKey}${metadata.backgroundImage}`;
           } else {
             campaignBackgroundImage = metadata.backgroundImage;
           }

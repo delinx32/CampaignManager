@@ -144,9 +144,13 @@ if (isOAuthConfigured) {
     user.currentShareKey = accessibleShareKeys.length > 0 ? accessibleShareKeys[0].shareKey : null;
     
     // Assign role based on share key ownership
-    // If user owns or has access to any share keys, they're a GM
+    // If user owns ANY share key, they're an owner
+    // Else if user has access to any share keys, they're a GM
     // Otherwise, they're a player
-    if (accessibleShareKeys.length > 0) {
+    const ownsAnyShareKey = accessibleShareKeys.some(sk => sk.isOwner);
+    if (ownsAnyShareKey) {
+      user.role = 'owner';
+    } else if (accessibleShareKeys.length > 0) {
       user.role = 'gm';
     } else {
       user.role = 'player';
@@ -195,7 +199,7 @@ const requireAuth = (req, res, next) => {
   res.status(401).json({ error: 'Authentication required' });
 };
 
-// GM role middleware - require GM role
+// GM role middleware - require GM or owner role
 // User is considered a GM if they:
 // 1. Are authenticated and accessing their own campaigns
 // 2. Are in the campaign owner's GM list (for future collaboration)
@@ -206,11 +210,28 @@ const requireGM = (req, res, next) => {
   
   // For now, all authenticated users can access their own campaigns
   // Future: check if req.user.id is in the campaign owner's GM list
-  if (req.user.role === 'gm') {
+  if (req.user.role === 'gm' || req.user.role === 'owner') {
     return next();
   }
   
   res.status(403).json({ error: 'GM access required' });
+};
+
+// Owner role middleware - require ownership of the current share key
+const requireOwner = (req, res, next) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  
+  // Check if user owns the specific share key being accessed
+  if (req.shareKey && req.user.accessibleShareKeys) {
+    const shareKeyInfo = req.user.accessibleShareKeys.find(sk => sk.shareKey === req.shareKey);
+    if (shareKeyInfo && shareKeyInfo.isOwner) {
+      return next();
+    }
+  }
+  
+  res.status(403).json({ error: 'Owner access required for this share key' });
 };
 
 // ===========================
@@ -580,6 +601,7 @@ export {
   sessionMiddleware,
   requireAuth,
   requireGM,
+  requireOwner,
   isOAuthConfigured,
   users,
   usersByEmail,

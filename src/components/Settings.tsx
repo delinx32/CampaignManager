@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../config';
 import AppHeader from './AppHeader';
 import './Settings.css';
 
 function Settings() {
-  const navigate = useNavigate();
   const { user, checkAuth } = useAuth();
   const [shareKey, setShareKey] = useState('');
   
@@ -197,9 +195,6 @@ function Settings() {
         subtitle="Manage your account and preferences" 
       />
       <div className="settings-content">
-        <button onClick={() => navigate('/')} className="back-button">
-          ← Back to Campaigns
-        </button>
 
       {message && (
         <div className={`message ${message.type}`}>

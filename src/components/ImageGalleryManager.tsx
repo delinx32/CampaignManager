@@ -242,9 +242,6 @@ export default function ImageGalleryManager() {
         subtitle="Manage your campaign images" 
       />
       <div className="gallery-content">
-        <button onClick={() => navigate('/')} className="back-button">
-          ← Back to Campaigns
-        </button>
 
       <div className="folder-selector">
         <label>Select Folder:</label>

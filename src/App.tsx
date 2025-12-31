@@ -43,6 +43,26 @@ function ViewerRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Owner-only route - check if user owns the current share key
+function OwnerRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>Loading...</div>;
+  }
+
+  // Check if user owns the current share key
+  const isOwnerOfCurrentShareKey = user?.currentShareKey && user?.accessibleShareKeys?.some(
+    sk => sk.shareKey === user.currentShareKey && sk.isOwner
+  );
+
+  if (!isOwnerOfCurrentShareKey) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -50,7 +70,7 @@ function AppRoutes() {
       
       {/* GM routes - require authentication */}
       <Route path="/" element={<ProtectedRoute><CampaignSelection /></ProtectedRoute>} />
-      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/settings" element={<OwnerRoute><Settings /></OwnerRoute>} />
       <Route path="/image-gallery" element={<ProtectedRoute><ImageGalleryManager /></ProtectedRoute>} />
       <Route path="/campaign/:campaignName" element={<ProtectedRoute><ScenarioSelection /></ProtectedRoute>} />
       <Route path="/campaign/:campaignName/:scenarioName/gm" element={<ProtectedRoute><GMView /></ProtectedRoute>} />

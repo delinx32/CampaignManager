@@ -257,57 +257,6 @@ export default function GMView() {
         scenarioName={scenarioName}
       />
       <header className="gm-controls">
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-          <button
-            onClick={() => navigate('/')}
-            style={{
-              background: 'rgba(255, 255, 255, 0.1)',
-              border: '2px solid rgba(255, 255, 255, 0.3)',
-              color: '#fff',
-              padding: '0.5rem 1rem',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '0.9rem',
-              fontWeight: '500',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.5)';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-            }}
-          >
-            ← Campaigns
-          </button>
-          <button
-            onClick={() => navigate(`/campaign/${encodeURIComponent(campaignName || '')}`)}
-            style={{
-              background: 'rgba(77, 166, 255, 0.2)',
-              border: '2px solid rgba(77, 166, 255, 0.4)',
-              color: '#4da6ff',
-              padding: '0.5rem 1rem',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '0.9rem',
-              fontWeight: '500',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.background = 'rgba(77, 166, 255, 0.3)';
-              e.currentTarget.style.borderColor = '#4da6ff';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.background = 'rgba(77, 166, 255, 0.2)';
-              e.currentTarget.style.borderColor = 'rgba(77, 166, 255, 0.4)';
-            }}
-          >
-            ← Scenarios ({campaignName})
-          </button>
-        </div>
-        
         <div style={{ marginTop: '10px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           {isSessionActive ? (
             <>

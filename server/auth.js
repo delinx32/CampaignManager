@@ -213,6 +213,368 @@ const requireGM = (req, res, next) => {
   res.status(403).json({ error: 'GM access required' });
 };
 
+// ===========================
+// Authentication Routes Setup
+// ===========================
+
+/**
+ * Register all authentication routes with the Express app
+ * @param {Express.Application} app - The Express app instance
+ * @param {Object} context - Context object with game state getters and other references
+ *                            Can contain functions that return current values
+ */
+function registerAuthRoutes(app, context = {}) {
+  // Destructure context with defaults and handle both values and functions
+  const getContext = (key, defaultValue) => {
+    const value = context[key];
+    return typeof value === 'function' ? value() : value;
+  };
+
+  const getCurrentShareKey = () => getContext('currentShareKey', null);
+  const getCurrentCampaign = () => getContext('currentCampaign', null);
+  const getCurrentSessionName = () => getContext('currentSessionName', null);
+  const getCurrentScenario = () => getContext('currentScenario', null);
+  const getIsSessionActive = () => getContext('isSessionActive', false);
+  const getUsersDir = () => getContext('usersDir', path.join(__dirname, 'users'));
+
+  // ===========================
+  // Google OAuth Routes
+  // ===========================
+
+  if (isOAuthConfigured) {
+    // Google OAuth login
+    app.get('/auth/google',
+      passport.authenticate('google', { scope: ['profile', 'email'] })
+    );
+
+    // Google OAuth callback
+    app.get('/auth/google/callback',
+      passport.authenticate('google', { failureRedirect: 'http://localhost:5173/login?error=auth_failed' }),
+      (req, res) => {
+        // Successful authentication, redirect to home page
+        res.redirect('http://localhost:5173/');
+      }
+    );
+  } else {
+    // OAuth not configured - return helpful error
+    app.get('/auth/google', (req, res) => {
+      res.status(503).send('OAuth not configured. Please add Google OAuth credentials to settings.json');
+    });
+
+    app.get('/auth/google/callback', (req, res) => {
+      res.status(503).send('OAuth not configured. Please add Google OAuth credentials to settings.json');
+    });
+  }
+
+  // ===========================
+  // Logout Route
+  // ===========================
+
+  app.post('/auth/logout', (req, res) => {
+    req.logout((err) => {
+      if (err) {
+        return res.status(500).json({ error: 'Logout failed' });
+      }
+      res.json({ success: true });
+    });
+  });
+
+  // ===========================
+  // Auth Status Route
+  // ===========================
+
+  app.get('/auth/status', (req, res) => {
+    if (req.isAuthenticated()) {
+      res.json({
+        authenticated: true,
+        user: {
+          id: req.user.id,
+          email: req.user.email,
+          name: req.user.name,
+          picture: req.user.picture,
+          role: req.user.role,
+          accessibleShareKeys: req.user.accessibleShareKeys || [],
+          currentShareKey: req.user.currentShareKey || null
+        }
+      });
+    } else {
+      res.json({ authenticated: false, oauthConfigured: isOAuthConfigured });
+    }
+  });
+
+  // ===========================
+  // Share Key Sessions Route (Public)
+  // ===========================
+
+  app.get('/api/sharekey/:shareKey/sessions', (req, res) => {
+    const { shareKey } = req.params;
+    const usersDir = getUsersDir();
+    const isSessionActive = getIsSessionActive();
+    const currentShareKey = getCurrentShareKey();
+    const currentCampaign = getCurrentCampaign();
+    const currentSessionName = getCurrentSessionName();
+    const currentScenario = getCurrentScenario();
+
+    try {
+      const shareKeyPath = path.join(usersDir, shareKey);
+      if (!fs.existsSync(shareKeyPath)) {
+        return res.status(404).json({ error: 'Share key not found', campaigns: [] });
+      }
+
+      // Check if there's a currently active session for this share key
+      if (!isSessionActive || currentShareKey !== shareKey || !currentCampaign || !currentSessionName) {
+        return res.json({ campaigns: [] });
+      }
+
+      // Return only the currently active session
+      const campaignPath = path.join(shareKeyPath, 'campaigns', currentCampaign);
+      const sessionPath = path.join(campaignPath, 'sessions', currentSessionName);
+      const metadataPath = path.join(sessionPath, '.session-metadata.json');
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.json({ campaigns: [] });
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
+
+      const campaigns = [{
+        campaignName: currentCampaign,
+        sessions: [{
+          sessionName: currentSessionName,
+          currentScenario: metadata.currentScenario || currentScenario,
+          lastPlayed: metadata.lastPlayed || metadata.createdAt
+        }]
+      }];
+
+      res.json({ campaigns });
+    } catch (err) {
+      console.error('Error loading active sessions:', err);
+      res.status(500).json({ error: 'Failed to load sessions' });
+    }
+  });
+
+  // ===========================
+  // Share Key Management Routes
+  // ===========================
+
+  // Get accessible share keys for current user
+  app.get('/api/share-keys', requireAuth, (req, res) => {
+    res.json({
+      accessibleShareKeys: req.user.accessibleShareKeys || [],
+      currentShareKey: req.user.currentShareKey
+    });
+  });
+
+  // Create a new share key
+  app.post('/api/share-keys', requireAuth, (req, res) => {
+    const { shareKey } = req.body;
+
+    if (!shareKey || typeof shareKey !== 'string') {
+      return res.status(400).json({ error: 'Share key is required' });
+    }
+
+    // Sanitize the share key
+    const sanitizedKey = shareKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (sanitizedKey.length < 3) {
+      return res.status(400).json({ error: 'Share key must be at least 3 characters' });
+    }
+
+    // Check if share key already exists
+    if (shareKeyExists(sanitizedKey)) {
+      return res.status(409).json({ error: 'This share key is already in use' });
+    }
+
+    // Create the share key folder with user data
+    const shareKeyData = {
+      ownerId: req.user.id,
+      ownerEmail: req.user.email,
+      key: sanitizedKey,
+      gms: [req.user.email],
+      openaiApiKey: null
+    };
+
+    saveShareKeyData(sanitizedKey, shareKeyData);
+
+    // Add to user's accessible share keys
+    if (!req.user.accessibleShareKeys) {
+      req.user.accessibleShareKeys = [];
+    }
+
+    req.user.accessibleShareKeys.push({
+      shareKey: sanitizedKey,
+      ownerId: req.user.id,
+      isOwner: true
+    });
+
+    // Set as current if it's the first one
+    if (!req.user.currentShareKey) {
+      req.user.currentShareKey = sanitizedKey;
+    }
+
+    // Save updated user
+    saveUsers();
+
+    res.json({
+      success: true,
+      shareKey: sanitizedKey,
+      accessibleShareKeys: req.user.accessibleShareKeys,
+      currentShareKey: req.user.currentShareKey
+    });
+  });
+
+  // Set current share key
+  app.patch('/api/share-keys/current', requireAuth, (req, res) => {
+    const { shareKey } = req.body;
+
+    if (!shareKey || typeof shareKey !== 'string') {
+      return res.status(400).json({ error: 'Share key is required' });
+    }
+
+    // Verify user has access to this share key
+    const hasAccess = req.user.accessibleShareKeys?.some(sk => sk.shareKey === shareKey);
+
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'You do not have access to this share key' });
+    }
+
+    req.user.currentShareKey = shareKey;
+    saveUsers();
+
+    res.json({
+      success: true,
+      currentShareKey: shareKey
+    });
+  });
+
+  // Rename a share key (owner only)
+  app.patch('/api/share-keys/:oldKey/rename', requireAuth, (req, res) => {
+    const { oldKey } = req.params;
+    const { newKey } = req.body;
+
+    if (!newKey || typeof newKey !== 'string') {
+      return res.status(400).json({ error: 'New share key is required' });
+    }
+
+    // Sanitize the new key
+    const sanitizedNewKey = newKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (sanitizedNewKey.length < 3) {
+      return res.status(400).json({ error: 'Share key must be at least 3 characters' });
+    }
+
+    // Verify user owns the old share key
+    const shareKeyInfo = req.user.accessibleShareKeys?.find(sk => sk.shareKey === oldKey);
+
+    if (!shareKeyInfo || !shareKeyInfo.isOwner) {
+      return res.status(403).json({ error: 'You can only rename share keys you own' });
+    }
+
+    // Check if new key already exists
+    if (shareKeyExists(sanitizedNewKey) && oldKey !== sanitizedNewKey) {
+      return res.status(409).json({ error: 'This share key is already in use' });
+    }
+
+    // Rename the folder
+    const oldPath = path.join(usersDir, oldKey);
+    const newPath = path.join(usersDir, sanitizedNewKey);
+
+    try {
+      fs.renameSync(oldPath, newPath);
+
+      // Update the .user.json with the new key
+      const shareKeyData = loadShareKeyData(sanitizedNewKey);
+      shareKeyData.key = sanitizedNewKey;
+      saveShareKeyData(sanitizedNewKey, shareKeyData);
+
+      // Update user's accessible share keys
+      if (req.user.accessibleShareKeys) {
+        const index = req.user.accessibleShareKeys.findIndex(sk => sk.shareKey === oldKey);
+        if (index !== -1) {
+          req.user.accessibleShareKeys[index].shareKey = sanitizedNewKey;
+        }
+      }
+
+      // Update current share key if it was the renamed one
+      if (req.user.currentShareKey === oldKey) {
+        req.user.currentShareKey = sanitizedNewKey;
+      }
+
+      saveUsers();
+
+      res.json({
+        success: true,
+        oldKey,
+        newKey: sanitizedNewKey,
+        accessibleShareKeys: req.user.accessibleShareKeys,
+        currentShareKey: req.user.currentShareKey
+      });
+    } catch (err) {
+      console.error('Error renaming share key folder:', err);
+      res.status(500).json({ error: 'Failed to rename share key' });
+    }
+  });
+}
+
+// ===========================
+// Helper Functions
+// ===========================
+
+/**
+ * Check if a share key already exists
+ */
+function shareKeyExists(shareKey) {
+  const usersDir = path.join(__dirname, 'users');
+  return fs.existsSync(path.join(usersDir, shareKey));
+}
+
+/**
+ * Get the path to a share key's .user.json data file
+ */
+function getShareKeyDataPath(shareKey) {
+  const usersDir = path.join(__dirname, 'users');
+  return path.join(usersDir, shareKey, '.user.json');
+}
+
+/**
+ * Load share key data from disk
+ */
+function loadShareKeyData(shareKey) {
+  const dataPath = getShareKeyDataPath(shareKey);
+  if (fs.existsSync(dataPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+      // Ensure required fields exist for backward compatibility
+      if (!data.gms) {
+        data.gms = [];
+      }
+      if (!data.ownerId) {
+        data.ownerId = null;
+      }
+      return data;
+    } catch (err) {
+      console.error('Error reading share key data:', err);
+    }
+  }
+  return { gms: [], ownerId: null };
+}
+
+/**
+ * Save share key data to disk
+ */
+function saveShareKeyData(shareKey, data) {
+  const usersDir = path.join(__dirname, 'users');
+  const dataPath = getShareKeyDataPath(shareKey);
+  
+  // Ensure directory exists
+  const dir = path.dirname(dataPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  
+  fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
+}
+
 export {
   passport,
   sessionMiddleware,
@@ -220,5 +582,9 @@ export {
   requireGM,
   isOAuthConfigured,
   users,
-  usersByEmail
+  usersByEmail,
+  registerAuthRoutes,
+  shareKeyExists,
+  loadShareKeyData,
+  saveShareKeyData
 };

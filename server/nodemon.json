@@ -1,5 +1,5 @@
 {
-  "watch": ["server.js", "settings.json", "prompt-templates/*.txt"],
+  "watch": ["server.js", "settings.json", "prompt-templates/*.txt", "*.js"],
   "ext": "js,json,txt",
   "execMap": {
     "js": "node --experimental-modules"

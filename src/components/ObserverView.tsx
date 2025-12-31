@@ -2,6 +2,11 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import './ObserverView.css';
 import { API_URL } from '../config';
 import type { Token, Prop, RevealZone } from '../types';
+import { isPointRevealed } from '../utils/fogReveal';
+import { renderFog } from '../utils/fogRendering';
+import { useTokenMovement } from '../hooks/useTokenMovement';
+import { calculateGridCellPixelSize } from '../utils/tokenMovement';
+import { useGameWebSocket } from '../hooks/useGameWebSocket';
 
 // Helper function to get the current image URL based on active state
 const getCurrentImageUrl = (item: Token | Prop): string | undefined => {
@@ -30,8 +35,8 @@ interface ObserverViewProps {
   revealZones?: RevealZone[];
   permanentlyRevealedZones?: Set<string>;
   userRole?: 'gm' | 'player';
-  campaignName?: string;
-  sessionName?: string;
+  campaign?: string;
+  session?: string;
 }
 
 export default function ObserverView({ 
@@ -52,17 +57,66 @@ export default function ObserverView({
   revealZones = [],
   permanentlyRevealedZones = new Set(),
   userRole,
-  campaignName,
-  sessionName
+  campaign = '',
+  session = ''
 }: ObserverViewProps) {
+  const { send: sendWebSocket, subscribe } = useGameWebSocket(campaign, session);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fogCanvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const tokenImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [hoveredToken, setHoveredToken] = useState<Token | null>(null);
+  const [hoveredProp, setHoveredProp] = useState<Prop | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [draggedToken, setDraggedToken] = useState<Token | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectedToken, setSelectedToken] = useState<Token | null>(null);
+  const [isMoving, setIsMoving] = useState(false);
+  const clickedTokenRef = useRef<Token | null>(null);
+  const optimisticPositions = useRef<Map<string, { x: number; y: number; currentlyFacing?: 'left' | 'right' }>>(new Map());
+  const animatingTokenIds = useRef<Set<string>>(new Set());
+  const finalAnimationPositions = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // Calculate actual pixel-based grid cell size for distance validation
+  const pixelGridCellSize = calculateGridCellPixelSize(canvasRef.current, imageRef.current, gridColumns, gridRows);
+
+  // Initialize shared token movement hook
+  const { validateMove, applyMove } = useTokenMovement(tokens, { props, gridCellDistance: pixelGridCellSize });
+
+  // Subscribe to WebSocket token movement updates
+  useEffect(() => {
+    const unsubscribe = subscribe('tokenMoved', (data: any) => {
+      console.log('ObserverView: Received tokenMoved event', data);
+      // Update tokens array with new position
+      // Note: This is from other players/GM, just update our local state
+    });
+
+    return unsubscribe;
+  }, [subscribe]);
+
+  // Helper function to check if a point is revealed (not under fog)
+  const checkPointRevealed = useCallback((x: number, y: number): boolean => {
+    if (!imageRef.current || !canvasRef.current) return true;
+    
+    return isPointRevealed(
+      x, y,
+      tokens,
+      props,
+      revealedPath,
+      revealZones,
+      permanentlyRevealedZones,
+      fogEnabled,
+      lightingCondition,
+      fogRevealDistance,
+      gridColumns,
+      gridRows,
+      canvasRef.current.width,
+      canvasRef.current.height,
+      imageRef.current.width,
+      imageRef.current.height
+    );
+  }, [fogEnabled, lightingCondition, fogRevealDistance, gridColumns, gridRows, tokens, props, revealedPath, revealZones, permanentlyRevealedZones]);
 
   // Load background image
   useEffect(() => {
@@ -89,15 +143,34 @@ export default function ObserverView({
   // Load token images
   useEffect(() => {
     tokens.forEach(token => {
-      const currentImageUrl = getCurrentImageUrl(token);
-      if (currentImageUrl && !tokenImagesRef.current.has(token.id)) {
-        const img = new Image();
-        img.onload = () => {
-          tokenImagesRef.current.set(token.id, img);
-          drawCanvas();
-        };
-        // Prepend API_URL if the image URL is relative
-        img.src = currentImageUrl.startsWith('http') ? currentImageUrl : `${API_URL}${currentImageUrl}`;
+      // Load base image
+      if (token.imageUrl) {
+        const baseKey = token.id;
+        if (!tokenImagesRef.current.has(baseKey)) {
+          const img = new Image();
+          img.onload = () => {
+            tokenImagesRef.current.set(baseKey, img);
+            drawCanvas();
+          };
+          img.src = `${API_URL}${token.imageUrl}`;
+        }
+      }
+      
+      // Load state images
+      if (token.states) {
+        token.states.forEach(state => {
+          if (state.imageUrl) {
+            const stateKey = `${token.id}_${state.name}`;
+            if (!tokenImagesRef.current.has(stateKey)) {
+              const img = new Image();
+              img.onload = () => {
+                tokenImagesRef.current.set(stateKey, img);
+                drawCanvas();
+              };
+              img.src = `${API_URL}${state.imageUrl}`;
+            }
+          }
+        });
       }
     });
   }, [tokens]);
@@ -105,18 +178,59 @@ export default function ObserverView({
   // Load prop images
   useEffect(() => {
     props.forEach(prop => {
-      const currentImageUrl = getCurrentImageUrl(prop);
-      if (currentImageUrl && !tokenImagesRef.current.has(prop.id)) {
-        const img = new Image();
-        img.onload = () => {
-          tokenImagesRef.current.set(prop.id, img);
-          drawCanvas();
-        };
-        // Prepend API_URL if the image URL is relative
-        img.src = currentImageUrl.startsWith('http') ? currentImageUrl : `${API_URL}${currentImageUrl}`;
+      // Load base image
+      if (prop.imageUrl) {
+        const baseKey = prop.id;
+        if (!tokenImagesRef.current.has(baseKey)) {
+          const img = new Image();
+          img.onload = () => {
+            tokenImagesRef.current.set(baseKey, img);
+            drawCanvas();
+          };
+          img.src = `${API_URL}${prop.imageUrl}`;
+        }
+      }
+      
+      // Load state images
+      if (prop.states) {
+        prop.states.forEach(state => {
+          if (state.imageUrl) {
+            const stateKey = `${prop.id}_${state.name}`;
+            if (!tokenImagesRef.current.has(stateKey)) {
+              const img = new Image();
+              img.onload = () => {
+                tokenImagesRef.current.set(stateKey, img);
+                drawCanvas();
+              };
+              img.src = `${API_URL}${state.imageUrl}`;
+            }
+          }
+        });
       }
     });
   }, [props]);
+
+  // Clear optimistic positions and animation flags when server confirms them
+  useEffect(() => {
+    const toRemove: string[] = [];
+    optimisticPositions.current.forEach((pos, tokenId) => {
+      const serverToken = tokens.find(t => t.id === tokenId);
+      if (serverToken && serverToken.x === pos.x && serverToken.y === pos.y) {
+        toRemove.push(tokenId);
+      }
+    });
+    
+    // Also check finalAnimationPositions - if animation finished and position matches, clear the animation flag
+    finalAnimationPositions.current.forEach((finalPos, tokenId) => {
+      const serverToken = tokens.find(t => t.id === tokenId);
+      if (serverToken && serverToken.x === finalPos.x && serverToken.y === finalPos.y) {
+        animatingTokenIds.current.delete(tokenId);
+        finalAnimationPositions.current.delete(tokenId);
+      }
+    });
+    
+    toRemove.forEach(id => optimisticPositions.current.delete(id));
+  }, [tokens]);
 
   // Set canvas dimensions to match CSS size
   useEffect(() => {
@@ -182,7 +296,8 @@ export default function ObserverView({
       const currentImageUrl = getCurrentImageUrl(prop);
       console.log('Prop:', prop.id, 'has image:', !!currentImageUrl, 'x:', prop.x, 'y:', prop.y, 'radius:', prop.radius);
       if (prop.x !== undefined && prop.y !== undefined && prop.radius) {
-        const propImg = tokenImagesRef.current.get(prop.id);
+        const propKey = prop.activeState ? `${prop.id}_${prop.activeState}` : prop.id;
+        const propImg = tokenImagesRef.current.get(propKey);
         
         if (currentImageUrl && propImg && propImg.complete) {
           // Draw prop with image
@@ -219,10 +334,17 @@ export default function ObserverView({
     });
 
     // Draw tokens (on top of props - only active ones for players)
-    // Use dragged token if currently dragging, otherwise use tokens from props
-    const tokensToRender = draggedToken 
-      ? tokens.map(t => t.id === draggedToken.id ? draggedToken : t)
-      : tokens;
+    // Use dragged token if currently dragging, otherwise use tokens from props with optimistic positions
+    const tokensToRender = tokens.map(t => {
+      if (draggedToken && t.id === draggedToken.id) {
+        return draggedToken;
+      }
+      const optimisticPos = optimisticPositions.current.get(t.id);
+      if (optimisticPos) {
+        return { ...t, ...optimisticPos };
+      }
+      return t;
+    });
       
     tokensToRender.filter(token => token.active).forEach(token => {
       // Skip tokens without positions
@@ -238,9 +360,17 @@ export default function ObserverView({
       const isPlayerToken = selectedTokenId && token.id === selectedTokenId;
       const isCurrentTurn = currentActorId && token.id === currentActorId;
       
+      // Use optimistic position if available (from animation), otherwise use token position
+      const optimisticPos = optimisticPositions.current.get(token.id);
+      const isAnimating = animatingTokenIds.current.has(token.id);
+      // If animating, always use optimistic position (never fall back to token position which might be stale)
+      const tokenX = isAnimating && optimisticPos ? optimisticPos.x : (optimisticPos?.x ?? token.x);
+      const tokenY = isAnimating && optimisticPos ? optimisticPos.y : (optimisticPos?.y ?? token.y);
+      const tokenFacing = isAnimating && optimisticPos ? optimisticPos.currentlyFacing : (optimisticPos?.currentlyFacing ?? token.currentlyFacing);
+      
       // Draw circle background/border
       ctx.beginPath();
-      ctx.arc(token.x, token.y, token.radius, 0, Math.PI * 2);
+      ctx.arc(tokenX, tokenY, token.radius, 0, Math.PI * 2);
       ctx.fillStyle = token.color || 'rgba(0, 100, 255, 0.5)';
       ctx.fill();
       ctx.strokeStyle = token.color ? token.color.replace('0.5', '0.8') : 'rgba(0, 50, 200, 0.8)';
@@ -250,44 +380,53 @@ export default function ObserverView({
       // Add gold highlight if it's this token's turn
       if (isCurrentTurn) {
         ctx.beginPath();
-        ctx.arc(token.x, token.y, token.radius + 4, 0, Math.PI * 2);
+        ctx.arc(tokenX, tokenY, token.radius + 4, 0, Math.PI * 2);
         ctx.strokeStyle = 'gold';
         ctx.lineWidth = 4;
         ctx.stroke();
       } else if (token.actor?.player) {
         // Add blue highlight for other player characters
         ctx.beginPath();
-        ctx.arc(token.x, token.y, token.radius + 3, 0, Math.PI * 2);
+        ctx.arc(tokenX, tokenY, token.radius + 3, 0, Math.PI * 2);
         ctx.strokeStyle = isPlayerToken ? '#a855f7' : '#4da6ff';
         ctx.lineWidth = 3;
         ctx.stroke();
       }
       
+      // Add red highlight for selected token (for movement)
+      if (selectedToken && selectedToken.id === token.id) {
+        ctx.beginPath();
+        ctx.arc(tokenX, tokenY, token.radius + 5, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.9)';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
       
       // Draw token image if available
       const currentImageUrl = getCurrentImageUrl(token);
       if (currentImageUrl) {
-        const tokenImg = tokenImagesRef.current.get(token.id);
+        const tokenKey = token.activeState ? `${token.id}_${token.activeState}` : token.id;
+        const tokenImg = tokenImagesRef.current.get(tokenKey);
         if (tokenImg && tokenImg.complete) {
           ctx.save();
           
           // Apply horizontal flip if token is facing left
-          const facing = token.currentlyFacing || 'right';
+          const facing = tokenFacing || 'right';
           if (facing === 'left') {
-            ctx.translate(token.x, token.y);
+            ctx.translate(tokenX, tokenY);
             ctx.scale(-1, 1);
-            ctx.translate(-token.x, -token.y);
+            ctx.translate(-tokenX, -tokenY);
           }
           
           ctx.beginPath();
-          ctx.arc(token.x, token.y, token.radius - 1, 0, Math.PI * 2);
+          ctx.arc(tokenX, tokenY, token.radius - 1, 0, Math.PI * 2);
           ctx.clip();
           
           const imgSize = (token.radius - 1) * 2;
           ctx.drawImage(
             tokenImg,
-            token.x - token.radius + 1,
-            token.y - token.radius + 1,
+            tokenX - token.radius + 1,
+            tokenY - token.radius + 1,
             imgSize,
             imgSize
           );
@@ -340,12 +479,12 @@ export default function ObserverView({
 
       ctx.restore();
     }
-  }, [backgroundImage, transform, tokens, props, showGrid, gridColumns, gridRows, selectedTokenId, currentActorId, imageLoaded, draggedToken]);
+  }, [backgroundImage, transform, tokens, props, showGrid, gridColumns, gridRows, selectedTokenId, currentActorId, imageLoaded, draggedToken, selectedToken]);
 
   // Draw fog of war
   const drawFog = useCallback(() => {
     const canvas = fogCanvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !imageRef.current) return;
     
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -359,204 +498,35 @@ export default function ObserverView({
     // Use GM-controlled player fog opacity, modified by lighting conditions
     let fogOpacity = playerFogOpacity;
     if (lightingCondition === 'dim') {
-      fogOpacity = Math.min(playerFogOpacity, 0.6); // Dim light - partial obscurement
+      fogOpacity = Math.min(playerFogOpacity, 0.6);
     } else if (lightingCondition === 'darkness') {
-      fogOpacity = playerFogOpacity; // Use player fog opacity for darkness
+      fogOpacity = playerFogOpacity;
     }
 
     // Fill entire canvas with fog
     ctx.fillStyle = `rgba(0, 0, 0, ${fogOpacity})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate grid cell size in pixels for fog reveal radius
-    let gridCellSize = 20; // Default fallback
-    if (imageRef.current && gridColumns > 0 && gridRows > 0) {
-      const img = imageRef.current;
-      const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-      const imgWidth = img.width * scale;
-      const imgHeight = img.height * scale;
-      const cellWidth = imgWidth / gridColumns;
-      const cellHeight = imgHeight / gridRows;
-      // Use average of width and height for square-ish cells
-      gridCellSize = (cellWidth + cellHeight) / 2;
-    }
-
-    // Only clear fog around active player tokens and revealed path if there are light sources
-    const activePlayerTokens = tokens.filter(token => token.active && token.actor?.player === true);
+    // Use shared fog rendering utility (only if image is loaded)
+    if (!imageRef.current) return;
     
-    // Helper function to parse light radius from tags (e.g., "light[30]" -> 30)
-    const parseLightRadius = (tags?: string): number | null => {
-      if (!tags) return null;
-      const match = tags.match(/light\[(\d+)\]/i);
-      return match ? parseInt(match[1], 10) : null;
-    };
-
-    // Helper function to get effective tags from token/prop considering active state
-    const getEffectiveTags = (item: Token | Prop): string | undefined => {
-      if (item.activeState && item.states) {
-        const activeStateObj = item.states.find(s => s.name === item.activeState);
-        // If a state is active, only use that state's tags (even if undefined)
-        // Don't fall back to base tags when a state is explicitly selected
-        return activeStateObj?.tags;
-      }
-      // No active state, use base tags
-      return item.tags;
-    };
-
-    // Collect light sources from tokens and props with light tags
-    const lightSources: Array<{ x: number; y: number; radius: number }> = [];
-    const gridCellDistance = 5; // 5 feet per grid square (standard D&D)
-    
-    // Check all tokens for light tags
-    tokens.forEach(token => {
-      if (token.x !== undefined && token.y !== undefined && token.x !== null && token.y !== null) {
-        const effectiveTags = getEffectiveTags(token);
-        const lightRadius = parseLightRadius(effectiveTags);
-        if (lightRadius) {
-          // Convert feet to grid squares
-          const lightRadiusSquares = lightRadius / gridCellDistance;
-          lightSources.push({ x: token.x, y: token.y, radius: lightRadiusSquares });
-        }
-      }
+    renderFog({
+      canvas,
+      image: imageRef.current,
+      ctx,
+      transform,
+      tokens,
+      props,
+      revealedPath,
+      revealZones,
+      permanentlyRevealedZones,
+      fogRevealDistance,
+      lightingCondition,
+      gridColumns,
+      gridRows,
+      gridCellDistance: 5,
     });
-    
-    // Check all props for light tags
-    props.forEach(prop => {
-      if (prop.x !== undefined && prop.y !== undefined) {
-        const effectiveTags = getEffectiveTags(prop);
-        const lightRadius = parseLightRadius(effectiveTags);
-        if (lightRadius) {
-          // Convert feet to grid squares
-          const lightRadiusSquares = lightRadius / gridCellDistance;
-          lightSources.push({ x: prop.x, y: prop.y, radius: lightRadiusSquares });
-        }
-      }
-    });
-    
-    if (activePlayerTokens.length > 0 || revealedPath.length > 0 || lightSources.length > 0 || revealZones.length > 0) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'destination-out';
-      
-      // Reveal fog along the path tokens have traveled
-      if (revealedPath.length > 0) {
-        let effectiveRevealDistance = fogRevealDistance;
-        if (lightingCondition === 'darkness') {
-          effectiveRevealDistance = fogRevealDistance * 0.5;
-        }
-        
-        revealedPath.forEach(point => {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate((transform.rotation * Math.PI) / 180);
-          ctx.scale(transform.scale, transform.scale);
-          ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-          
-          const gradient = ctx.createRadialGradient(
-            point.x, point.y, 0,
-            point.x, point.y, gridCellSize * effectiveRevealDistance
-          );
-          gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
-          gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.8)');
-          gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-          
-          ctx.fillStyle = gradient;
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, gridCellSize * effectiveRevealDistance, 0, Math.PI * 2);
-          ctx.fill();
-          
-          ctx.restore();
-        });
-      }
-      
-      activePlayerTokens.forEach(token => {
-        // Skip tokens without positions
-        if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) return;
-        
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((transform.rotation * Math.PI) / 180);
-        ctx.scale(transform.scale, transform.scale);
-        ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-        
-        // Adjust reveal distance based on lighting condition
-        let effectiveRevealDistance = fogRevealDistance;
-        if (lightingCondition === 'darkness') {
-          effectiveRevealDistance = fogRevealDistance * 0.5;
-        }
-        
-        // Create gradient for smooth fog reveal using grid cell size
-        const gradient = ctx.createRadialGradient(
-          token.x, token.y, 0, 
-          token.x, token.y, gridCellSize * effectiveRevealDistance
-        );
-        gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
-        gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.8)');
-        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(token.x, token.y, gridCellSize * effectiveRevealDistance, 0, Math.PI * 2);
-        ctx.fill();
-        
-        ctx.restore();
-      });
-      
-      // Reveal fog around light sources (props with lighting effects)
-      lightSources.forEach(light => {
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((transform.rotation * Math.PI) / 180);
-        ctx.scale(transform.scale, transform.scale);
-        ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-
-        const gradient = ctx.createRadialGradient(
-          light.x, light.y, 0,
-          light.x, light.y, gridCellSize * light.radius
-        );
-        gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
-        gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.8)');
-        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(light.x, light.y, gridCellSize * light.radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
-      });
-      
-      // Reveal fog in reveal zones
-      revealZones.forEach(zone => {
-        // Check if any active player token is in the zone
-        const playerInZone = activePlayerTokens.some(token => {
-          if (token.x === undefined || token.y === undefined) return false;
-          return (
-            token.x >= zone.x &&
-            token.x <= zone.x + zone.width &&
-            token.y >= zone.y &&
-            token.y <= zone.y + zone.height
-          );
-        });
-
-        // Reveal if player is in zone, or if zone is permanent and has been revealed
-        if (playerInZone || (zone.permanent && permanentlyRevealedZones.has(zone.id))) {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate((transform.rotation * Math.PI) / 180);
-          ctx.scale(transform.scale, transform.scale);
-          ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-
-          // Clear fog in this rectangular zone
-          ctx.fillStyle = 'rgba(0, 0, 0, 1)';
-          ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
-
-          ctx.restore();
-        }
-      });
-      
-      ctx.restore();
-    }
-  }, [tokens, props, transform, fogEnabled, fogRevealDistance, playerFogOpacity, lightingCondition, revealedPath, gridColumns, gridRows, imageRef, revealZones, permanentlyRevealedZones]);
+  }, [tokens, props, transform, fogEnabled, fogRevealDistance, playerFogOpacity, lightingCondition, revealedPath, gridColumns, gridRows, revealZones, permanentlyRevealedZones]);
 
   // Redraw when props change
   useEffect(() => {
@@ -595,49 +565,6 @@ export default function ObserverView({
     return { x: snappedX, y: snappedY };
   }, [gridColumns, gridRows]);
 
-  // Calculate grid distance between two positions
-  const getGridDistance = useCallback((x1: number, y1: number, x2: number, y2: number): number => {
-    if (!canvasRef.current || !imageRef.current || gridColumns <= 0 || gridRows <= 0) {
-      return 0;
-    }
-
-    const canvas = canvasRef.current;
-    const img = imageRef.current;
-    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-    const imgWidth = img.width * scale;
-    const imgHeight = img.height * scale;
-    const offsetX = (canvas.width - imgWidth) / 2;
-    const offsetY = (canvas.height - imgHeight) / 2;
-
-    const cellWidth = imgWidth / gridColumns;
-    const cellHeight = imgHeight / gridRows;
-
-    // Convert to grid coordinates
-    const gridX1 = Math.floor((x1 - offsetX) / cellWidth);
-    const gridY1 = Math.floor((y1 - offsetY) / cellHeight);
-    const gridX2 = Math.floor((x2 - offsetX) / cellWidth);
-    const gridY2 = Math.floor((y2 - offsetY) / cellHeight);
-
-    // Calculate Manhattan distance (grid squares)
-    return Math.abs(gridX2 - gridX1) + Math.abs(gridY2 - gridY1);
-  }, [gridColumns, gridRows]);
-
-  // Check if a position is occupied by another token
-  const isPositionOccupied = useCallback((x: number, y: number, excludeTokenId?: string): boolean => {
-    return tokens.some(token => {
-      // Skip tokens without positions
-      if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) return false;
-      
-      if (excludeTokenId && token.id === excludeTokenId) {
-        return false;
-      }
-      // Check if positions are the same (with small tolerance for floating point comparison)
-      const dx = Math.abs(token.x - x);
-      const dy = Math.abs(token.y - y);
-      return dx < 1 && dy < 1;
-    });
-  }, [tokens]);
-
   // Check if user can move a token
   const canMoveToken = useCallback((token: Token): boolean => {
     // GM can move any token
@@ -647,6 +574,206 @@ export default function ObserverView({
     // No auth = no movement
     return false;
   }, [userRole]);
+
+  // Animate token movement along a path
+  const animateTokenMovement = useCallback(async (token: Token, path: Array<{ x: number; y: number }>) => {
+    if (path.length === 0 || isMoving) return;
+    
+    setIsMoving(true);
+    animatingTokenIds.current.add(token.id);
+    
+    for (let i = 0; i < path.length; i++) {
+      const step = path[i];
+      const previousX = i === 0 ? token.x : path[i - 1].x;
+      
+      // Determine facing direction
+      let currentlyFacing = token.currentlyFacing;
+      if (previousX !== undefined && step.x !== previousX) {
+        currentlyFacing = step.x > previousX ? 'right' : 'left';
+      }
+      
+      // Update optimistic position for immediate visual feedback
+      optimisticPositions.current.set(token.id, {
+        x: step.x,
+        y: step.y,
+        currentlyFacing
+      });
+      
+      // Trigger canvas redraw
+      drawCanvas();
+      
+      // Update position on backend via WebSocket
+      sendWebSocket({
+        type: 'tokenMoved',
+        data: {
+          tokenId: token.id,
+          x: step.x,
+          y: step.y,
+          currentlyFacing
+        }
+      });
+      
+      // Wait 200ms before next step
+      if (i < path.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+    
+    // Store final position but keep animatingTokenIds set - will be cleared by useEffect when game state updates
+    const finalPos = path[path.length - 1];
+    finalAnimationPositions.current.set(token.id, { x: finalPos.x, y: finalPos.y });
+    
+    setIsMoving(false);
+    setSelectedToken(null);
+  }, [isMoving, drawCanvas, sendWebSocket]);
+
+  // A* pathfinding algorithm
+  const findPath = useCallback((startX: number, startY: number, endX: number, endY: number, excludeTokenId?: string): Array<{ x: number; y: number }> => {
+    if (!canvasRef.current || !imageRef.current || gridColumns <= 0 || gridRows <= 0) {
+      return [];
+    }
+
+    const canvas = canvasRef.current;
+    const img = imageRef.current;
+    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+    const imgWidth = img.width * scale;
+    const imgHeight = img.height * scale;
+    const offsetX = (canvas.width - imgWidth) / 2;
+    const offsetY = (canvas.height - imgHeight) / 2;
+    const cellWidth = imgWidth / gridColumns;
+    const cellHeight = imgHeight / gridRows;
+
+    // Convert world coordinates to grid coordinates
+    const toGridCoord = (x: number, y: number) => ({
+      gx: Math.floor((x - offsetX) / cellWidth),
+      gy: Math.floor((y - offsetY) / cellHeight)
+    });
+
+    // Convert grid coordinates to world coordinates
+    const toWorldCoord = (gx: number, gy: number) => ({
+      x: offsetX + (gx + 0.5) * cellWidth,
+      y: offsetY + (gy + 0.5) * cellHeight
+    });
+
+    const start = toGridCoord(startX, startY);
+    const end = toGridCoord(endX, endY);
+
+    // Check if a grid position is occupied
+    const isGridOccupied = (gx: number, gy: number): boolean => {
+      const worldX = offsetX + (gx + 0.5) * cellWidth;
+      const worldY = offsetY + (gy + 0.5) * cellHeight;
+      return tokens.some(token => {
+        if (excludeTokenId && token.id === excludeTokenId) return false;
+        if (token.x === undefined || token.y === undefined) return false;
+        const dx = Math.abs(token.x - worldX);
+        const dy = Math.abs(token.y - worldY);
+        return dx < cellWidth * 0.5 && dy < cellHeight * 0.5;
+      }) || props.some(prop => {
+        if (prop.x === undefined || prop.y === undefined) return false;
+        const dx = Math.abs(prop.x - worldX);
+        const dy = Math.abs(prop.y - worldY);
+        return dx < cellWidth * 0.5 && dy < cellHeight * 0.5;
+      });
+    };
+
+    // Heuristic: Manhattan distance
+    const heuristic = (gx: number, gy: number) => Math.abs(gx - end.gx) + Math.abs(gy - end.gy);
+
+    // A* search
+    interface Node {
+      gx: number;
+      gy: number;
+      g: number; // cost from start
+      h: number; // heuristic to end
+      parent?: Node;
+    }
+
+    const openSet: Node[] = [];
+    const closedSet = new Set<string>();
+    const cameFrom = new Map<string, { gx: number; gy: number }>();
+
+    const startNode: Node = { gx: start.gx, gy: start.gy, g: 0, h: heuristic(start.gx, start.gy) };
+    openSet.push(startNode);
+
+    // Max iterations to prevent infinite loops
+    let iterations = 0;
+    const maxIterations = 10000;
+
+    while (openSet.length > 0 && iterations < maxIterations) {
+      iterations++;
+
+      // Find node with lowest f = g + h
+      let current = openSet[0];
+      let currentIndex = 0;
+      for (let i = 1; i < openSet.length; i++) {
+        const f = openSet[i].g + openSet[i].h;
+        const currentF = current.g + current.h;
+        if (f < currentF) {
+          current = openSet[i];
+          currentIndex = i;
+        }
+      }
+
+      if (current.gx === end.gx && current.gy === end.gy) {
+        // Found path - reconstruct it
+        const path: Array<{ x: number; y: number }> = [];
+        let node: Node | undefined = current;
+        while (node) {
+          const worldCoord = toWorldCoord(node.gx, node.gy);
+          path.unshift(worldCoord);
+          const key = `${node.gx},${node.gy}`;
+          const parent = cameFrom.get(key);
+          if (!parent) break;
+          node = { gx: parent.gx, gy: parent.gy, g: 0, h: 0 };
+        }
+        return path;
+      }
+
+      openSet.splice(currentIndex, 1);
+      const key = `${current.gx},${current.gy}`;
+      closedSet.add(key);
+
+      // Check neighbors (4-directional: up, down, left, right)
+      const neighbors = [
+        { gx: current.gx, gy: current.gy - 1 },
+        { gx: current.gx, gy: current.gy + 1 },
+        { gx: current.gx - 1, gy: current.gy },
+        { gx: current.gx + 1, gy: current.gy }
+      ];
+
+      for (const neighbor of neighbors) {
+        // Check bounds
+        if (neighbor.gx < 0 || neighbor.gx >= gridColumns || neighbor.gy < 0 || neighbor.gy >= gridRows) {
+          continue;
+        }
+
+        const neighborKey = `${neighbor.gx},${neighbor.gy}`;
+        if (closedSet.has(neighborKey)) continue;
+
+        // Check if occupied
+        if (isGridOccupied(neighbor.gx, neighbor.gy)) continue;
+
+        const g = current.g + 1;
+        const h = heuristic(neighbor.gx, neighbor.gy);
+        const neighborNode: Node = { ...neighbor, g, h };
+
+        // Check if neighbor is already in openSet with worse path
+        const existingIndex = openSet.findIndex(n => n.gx === neighbor.gx && n.gy === neighbor.gy);
+        if (existingIndex >= 0) {
+          if (g < openSet[existingIndex].g) {
+            openSet[existingIndex] = neighborNode;
+            cameFrom.set(neighborKey, { gx: current.gx, gy: current.gy });
+          }
+        } else {
+          openSet.push(neighborNode);
+          cameFrom.set(neighborKey, { gx: current.gx, gy: current.gy });
+        }
+      }
+    }
+
+    // No path found
+    return [];
+  }, [tokens, props, gridColumns, gridRows]);
 
   // Helper to convert screen to world coordinates
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number; y: number } => {
@@ -672,7 +799,35 @@ export default function ObserverView({
     return { x: worldX, y: worldY };
   }, [transform]);
 
-  // Handle mouse down to start dragging
+  // Helper to convert world to screen coordinates
+  const worldToScreen = useCallback((worldX: number, worldY: number): { x: number; y: number } => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    
+    // Apply transformation (inverse of screenToWorld)
+    let x = worldX - centerX + transform.x;
+    let y = worldY - centerY + transform.y;
+    
+    // Apply scale
+    x *= transform.scale;
+    y *= transform.scale;
+    
+    // Apply rotation
+    const angle = (transform.rotation * Math.PI) / 180;
+    const rotatedX = x * Math.cos(angle) - y * Math.sin(angle);
+    const rotatedY = x * Math.sin(angle) + y * Math.cos(angle);
+    
+    // Translate to canvas position
+    const screenX = rotatedX + centerX;
+    const screenY = rotatedY + centerY;
+
+    return { x: screenX, y: screenY };
+  }, [transform]);
+
+  // Handle mouse down to start dragging or prepare for click
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || !imageRef.current) return;
@@ -687,7 +842,56 @@ export default function ObserverView({
 
     const worldPos = screenToWorld(canvasX, canvasY);
 
-    // Check if clicking on a movable token
+    // If a token is selected and user clicks the map, move token along path
+    if (selectedToken && selectedToken.x !== undefined && selectedToken.y !== undefined && !isMoving) {
+      const activeTokens = tokens.filter(token => token.active);
+      let clickedOnToken = false;
+      
+      for (const token of activeTokens) {
+        if (token.x === undefined || token.y === undefined) continue;
+        const dx = worldPos.x - token.x;
+        const dy = worldPos.y - token.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= token.radius) {
+          clickedOnToken = true;
+          // If clicking on the same selected token, deselect it
+          if (token.id === selectedToken.id) {
+            setSelectedToken(null);
+            return;
+          }
+          // If clicking on a different token that can be moved, select it
+          if (canMoveToken(token)) {
+            setSelectedToken(token);
+            setHoveredToken(null);
+            setHoveredProp(null);
+            return;
+          }
+          break;
+        }
+      }
+      
+      if (!clickedOnToken) {
+        for (const prop of props) {
+          if (prop.x === undefined || prop.y === undefined) continue;
+          const dx = worldPos.x - prop.x;
+          const dy = worldPos.y - prop.y;
+          if (Math.sqrt(dx * dx + dy * dy) <= prop.radius) {
+            clickedOnToken = true;
+            break;
+          }
+        }
+      }
+      
+      // Clicked on empty space - move selected token
+      if (!clickedOnToken) {
+        const path = findPath(selectedToken.x, selectedToken.y, worldPos.x, worldPos.y, selectedToken.id);
+        if (path.length > 0) {
+          animateTokenMovement(selectedToken, path);
+        }
+        return;
+      }
+    }
+
+    // Check if clicking on a token (when no token is selected)
     const activeTokens = tokens.filter(token => token.active);
     for (const token of activeTokens) {
       if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) continue;
@@ -696,27 +900,86 @@ export default function ObserverView({
       const dy = worldPos.y - token.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
-      if (distance <= token.radius && canMoveToken(token)) {
-        // Store the token being dragged
-        setDraggedToken(token);
+      if (distance <= token.radius) {
+        // If user can move this token, select it for movement
+        if (canMoveToken(token)) {
+          setSelectedToken(token);
+          setHoveredToken(null);
+          setHoveredProp(null);
+          clickedTokenRef.current = null;
+          return;
+        }
+        
+        // Otherwise, store for info panel display
+        clickedTokenRef.current = token;
+        setIsDragging(false);
         return;
       }
     }
-  }, [tokens, transform, canMoveToken, screenToWorld]);
 
-  // Handle mouse up to finish dragging
+    // Check if clicking on a prop (if no token was clicked)
+    for (const prop of props) {
+      if (prop.x === undefined || prop.y === undefined) continue;
+      
+      const dx = worldPos.x - prop.x;
+      const dy = worldPos.y - prop.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance <= prop.radius) {
+        // Calculate screen position and show prop panel
+        const propScreenPos = worldToScreen(prop.x, prop.y);
+        const screenX = (propScreenPos.x / canvas.width) * rect.width;
+        const screenY = (propScreenPos.y / canvas.height) * rect.height;
+        setMousePos({ x: screenX, y: screenY });
+        setHoveredProp(prop);
+        setHoveredToken(null);
+        setSelectedToken(null);
+        return;
+      }
+    }
+    
+    setSelectedToken(null);
+  }, [tokens, props, screenToWorld, worldToScreen, canMoveToken, selectedToken, findPath, isMoving, animateTokenMovement]);
+
+  // Handle mouse up to finish dragging or show info panel
   const handleMouseUp = useCallback(() => {
-    // Keep draggedToken for a moment to let polling update before clearing
-    // This prevents the token from snapping back while waiting for the poll
-    setTimeout(() => {
-      setDraggedToken(null);
-    }, 100);
-  }, []);
+    const canvas = canvasRef.current;
+    
+    // If we didn't drag and clicked on a token, show the info panel
+    if (!isDragging && clickedTokenRef.current && canvas) {
+      const token = clickedTokenRef.current;
+      // Only show info if token is revealed (not under fog)
+      if (token.x !== undefined && token.y !== undefined && checkPointRevealed(token.x, token.y)) {
+        // Calculate screen position of the token center
+        const tokenScreenPos = worldToScreen(token.x, token.y);
+        const rect = canvas.getBoundingClientRect();
+        const screenX = (tokenScreenPos.x / canvas.width) * rect.width;
+        const screenY = (tokenScreenPos.y / canvas.height) * rect.height;
+        setMousePos({ x: screenX, y: screenY });
+        setHoveredToken(token);
+        setHoveredProp(null);
+      }
+    }
+    
+    // If we were dragging, store the optimistic position
+    if (isDragging && draggedToken) {
+      optimisticPositions.current.set(draggedToken.id, {
+        x: draggedToken.x!,
+        y: draggedToken.y!,
+        currentlyFacing: draggedToken.currentlyFacing
+      });
+    }
+    
+    // Clear drag state immediately
+    setDraggedToken(null);
+    setIsDragging(false);
+    clickedTokenRef.current = null;
+  }, [isDragging, draggedToken, worldToScreen, isPointRevealed]);
 
-  // Handle mouse move to detect token hovers
+  // Handle mouse move for dragging
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
-    if (!canvas || !imageRef.current) return;
+    if (!canvas || !imageRef.current || !draggedToken) return;
 
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -728,89 +991,41 @@ export default function ObserverView({
 
     const worldPos = screenToWorld(canvasX, canvasY);
 
-    // Handle dragging with grid-based movement
-    if (draggedToken && draggedToken.x !== undefined && draggedToken.y !== undefined) {
-      // Snap mouse position to grid
-      const snappedPos = snapToGrid(worldPos.x, worldPos.y);
+    // Snap mouse position to grid
+    const snappedPos = snapToGrid(worldPos.x, worldPos.y);
 
-      // Calculate grid distance from current position
-      const distance = getGridDistance(draggedToken.x, draggedToken.y, snappedPos.x, snappedPos.y);
+    // Validate the move using shared logic
+    if (draggedToken.x !== undefined && draggedToken.y !== undefined) {
+      const validatedMove = validateMove(draggedToken, snappedPos.x, snappedPos.y);
 
-      // Only allow movement of exactly 1 grid square
-      if (distance !== 1) {
-        return; // Don't move if distance is not exactly 1
+      // If move is not valid, don't proceed
+      if (!validatedMove) {
+        return;
       }
 
-      // Check if position is occupied by another token
-      if (isPositionOccupied(snappedPos.x, snappedPos.y, draggedToken.id)) {
-        return; // Don't move to occupied position
-      }
+      // Mark that we're dragging
+      setIsDragging(true);
 
-      // Update token position in tokens array
-      const deltaX = snappedPos.x - draggedToken.x;
-      const updatedToken = { ...draggedToken, x: snappedPos.x, y: snappedPos.y };
-      if (deltaX > 0) {
-        updatedToken.currentlyFacing = 'right';
-      } else if (deltaX < 0) {
-        updatedToken.currentlyFacing = 'left';
-      }
-
-      // Update the token in the dragged state
+      // Apply the validated move to the token
+      const updatedToken = applyMove(draggedToken, validatedMove);
       setDraggedToken(updatedToken);
 
-      // Save to backend immediately and await response
-      (async () => {
-        try {
-          const response = await fetch(`${API_URL}/api/update-token-position`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              tokenId: updatedToken.id,
-              x: updatedToken.x,
-              y: updatedToken.y,
-              currentlyFacing: updatedToken.currentlyFacing
-            })
-          });
-          
-          if (!response.ok) {
-            console.error('Failed to save token position:', await response.text());
-          } else {
-            console.log('Token position saved:', updatedToken.id, updatedToken.x, updatedToken.y);
-          }
-        } catch (error) {
-          console.error('Failed to save token position:', error);
+      // Fog reveal is now handled server-side in the update-token-position endpoint
+      // Save to backend immediately via WebSocket
+      sendWebSocket({
+        type: 'tokenMoved',
+        data: {
+          tokenId: updatedToken.id,
+          x: updatedToken.x,
+          y: updatedToken.y,
+          currentlyFacing: updatedToken.currentlyFacing
         }
-      })();
-
-      return;
+      });
     }
-
-    // Check if mouse is over any token (for hover effect)
-    const activeTokens = tokens.filter(token => token.active);
-    let foundToken: Token | null = null;
-
-    for (const token of activeTokens) {
-      // Skip tokens without positions
-      if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) continue;
-      
-      const dx = worldPos.x - token.x;
-      const dy = worldPos.y - token.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance <= token.radius) {
-        foundToken = token;
-        break;
-      }
-    }
-
-    setHoveredToken(foundToken);
-    setMousePos(foundToken ? { x: mouseX, y: mouseY } : null);
-  }, [tokens, transform, draggedToken, screenToWorld, snapToGrid, getGridDistance, isPositionOccupied]);
+  }, [draggedToken, screenToWorld, snapToGrid, validateMove, applyMove]);
 
   const handleMouseLeave = useCallback(() => {
-    setHoveredToken(null);
-    setMousePos(null);
+    // Don't close the panel on mouse leave - only close button should close it
   }, []);
 
   return (
@@ -829,15 +1044,45 @@ export default function ObserverView({
         <div 
           className="token-hover-card"
           style={{
+            position: 'absolute',
             left: `${mousePos.x}px`,
-            top: `${mousePos.y - 20}px`,
-            transform: 'translate(-50%, -100%)'
+            top: mousePos.y < 200 ? `${mousePos.y + 20}px` : `${mousePos.y - 20}px`,
+            transform: mousePos.y < 200 ? 'translate(-50%, 0%)' : 'translate(-50%, -100%)',
+            pointerEvents: 'auto'
           }}
         >
+          <button
+            className="token-hover-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              setHoveredToken(null);
+              setMousePos(null);
+            }}
+            style={{
+              position: 'absolute',
+              top: '4px',
+              right: '4px',
+              background: 'rgba(0, 0, 0, 0.7)',
+              border: '1px solid #666',
+              borderRadius: '3px',
+              color: '#fff',
+              cursor: 'pointer',
+              fontSize: '16px',
+              width: '24px',
+              height: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0'
+            }}
+            title="Close"
+          >
+            ×
+          </button>
           <div className="token-hover-header">
             {hoveredToken.imageUrl && (
               <img 
-                src={hoveredToken.imageUrl.startsWith('http') ? hoveredToken.imageUrl : `${API_URL}${hoveredToken.imageUrl}`}
+                src={`${API_URL}${hoveredToken.imageUrl}`}
                 alt={hoveredToken.actor?.name || 'Token'}
                 className="token-hover-image"
               />
@@ -863,6 +1108,286 @@ export default function ObserverView({
               </div>
             </div>
           )}
+          
+          {/* State thumbnails - only show if user is GM or owner */}
+          {hoveredToken.states && hoveredToken.states.length > 0 && (userRole === 'gm' || hoveredToken.actor?.player) && (
+            <div style={{
+              display: 'flex',
+              gap: '4px',
+              marginTop: '8px',
+              padding: '8px',
+              borderTop: '1px solid #666',
+              flexWrap: 'wrap',
+              justifyContent: 'center'
+            }}>
+              {/* Base state button */}
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    const response = await fetch(`${API_URL}/api/update-token-state`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({
+                        tokenId: hoveredToken.id,
+                        activeState: undefined
+                      })
+                    });
+                    if (!response.ok) {
+                      console.error('Failed to update token state:', await response.text());
+                    }
+                  } catch (error) {
+                    console.error('Failed to update token state:', error);
+                  }
+                }}
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  padding: '2px',
+                  border: !hoveredToken.activeState ? '2px solid #6fa86f' : '1px solid #666',
+                  background: !hoveredToken.activeState ? '#4a7c4a' : '#444',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                title="Base state"
+              >
+                <img
+                  src={`${API_URL}${hoveredToken.imageUrl}`}
+                  alt="Base"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    borderRadius: '2px'
+                  }}
+                />
+              </button>
+              
+              {/* State buttons */}
+              {hoveredToken.states
+                .filter(state => userRole === 'gm' || state.playerInteractible)
+                .map((state) => (
+                <button
+                  key={state.name}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      const response = await fetch(`${API_URL}/api/update-token-state`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({
+                          tokenId: hoveredToken.id,
+                          activeState: state.name
+                        })
+                      });
+                      if (!response.ok) {
+                        console.error('Failed to update token state:', await response.text());
+                      }
+                    } catch (error) {
+                      console.error('Failed to update token state:', error);
+                    }
+                  }}
+                  style={{
+                    width: '40px',
+                    height: '40px',
+                    padding: '2px',
+                    border: hoveredToken.activeState === state.name ? '2px solid #6fa86f' : '1px solid #666',
+                    background: hoveredToken.activeState === state.name ? '#4a7c4a' : '#444',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                  title={state.name}
+                >
+                  <img
+                    src={`${API_URL}${state.imageUrl}`}
+                    alt={state.name}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      borderRadius: '2px'
+                    }}
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {hoveredProp && mousePos && (hoveredProp.states && hoveredProp.states.length > 0) && (
+        <div 
+          className="token-hover-card"
+          style={{
+            position: 'absolute',
+            left: `${mousePos.x}px`,
+            top: mousePos.y < 200 ? `${mousePos.y + 20}px` : `${mousePos.y - 20}px`,
+            transform: mousePos.y < 200 ? 'translate(-50%, 0%)' : 'translate(-50%, -100%)',
+            pointerEvents: 'auto'
+          }}
+        >
+          <button
+            className="token-hover-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              setHoveredProp(null);
+              setMousePos(null);
+            }}
+            style={{
+              position: 'absolute',
+              top: '4px',
+              right: '4px',
+              background: 'rgba(0, 0, 0, 0.7)',
+              border: '1px solid #666',
+              borderRadius: '3px',
+              color: '#fff',
+              cursor: 'pointer',
+              fontSize: '16px',
+              width: '24px',
+              height: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0'
+            }}
+            title="Close"
+          >
+            ×
+          </button>
+          <div className="token-hover-header">
+            {hoveredProp.imageUrl && (
+              <img 
+                src={`${API_URL}${hoveredProp.imageUrl}`}
+                alt={hoveredProp.name || 'Prop'}
+                className="token-hover-image"
+              />
+            )}
+            <div className="token-hover-name">
+              {hoveredProp.name || 'Unknown'}
+            </div>
+          </div>
+          
+          {/* State thumbnails */}
+          <div style={{
+            display: 'flex',
+            gap: '4px',
+            marginTop: '8px',
+            padding: '8px',
+            borderTop: '1px solid #666',
+            flexWrap: 'wrap',
+            justifyContent: 'center'
+          }}>
+            {/* Base state button */}
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  const response = await fetch(`${API_URL}/api/update-prop-state`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                      propId: hoveredProp.id,
+                      activeState: undefined
+                    })
+                  });
+                  if (!response.ok) {
+                    console.error('Failed to update prop state:', await response.text());
+                  }
+                } catch (error) {
+                  console.error('Failed to update prop state:', error);
+                }
+              }}
+              style={{
+                width: '40px',
+                height: '40px',
+                padding: '2px',
+                border: !hoveredProp.activeState ? '2px solid #6fa86f' : '1px solid #666',
+                background: !hoveredProp.activeState ? '#4a7c4a' : '#444',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                overflow: 'hidden',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              title="Base state"
+            >
+              <img
+                src={`${API_URL}${hoveredProp.imageUrl}`}
+                alt="Base"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  borderRadius: '2px'
+                }}
+              />
+            </button>
+            
+            {/* State buttons - filter by playerInteractible */}
+            {hoveredProp.states
+              .filter(state => userRole === 'gm' || state.playerInteractible)
+              .map((state) => (
+              <button
+                key={state.name}
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    const response = await fetch(`${API_URL}/api/update-prop-state`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({
+                        propId: hoveredProp.id,
+                        activeState: state.name
+                      })
+                    });
+                    if (!response.ok) {
+                      console.error('Failed to update prop state:', await response.text());
+                    }
+                  } catch (error) {
+                    console.error('Failed to update prop state:', error);
+                  }
+                }}
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  padding: '2px',
+                  border: hoveredProp.activeState === state.name ? '2px solid #6fa86f' : '1px solid #666',
+                  background: hoveredProp.activeState === state.name ? '#4a7c4a' : '#444',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                title={state.name}
+              >
+                <img
+                  src={`${API_URL}${state.imageUrl}`}
+                  alt={state.name}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    borderRadius: '2px'
+                  }}
+                />
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

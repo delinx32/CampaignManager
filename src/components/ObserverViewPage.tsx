@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useGameWebSocket } from '../hooks/useGameWebSocket';
 import ObserverView from './ObserverView';
 import TokenCard from './TokenCard';
 import { API_URL } from '../config';
@@ -47,6 +48,7 @@ export default function ObserverViewPage() {
     showObserverCards: true
   });
   const [sessionEnded, setSessionEnded] = useState(false);
+  const { subscribe } = useGameWebSocket(campaignName || '', sessionName || '');
 
   useEffect(() => {
     if (!campaignName || !sessionName) return;
@@ -62,12 +64,13 @@ export default function ObserverViewPage() {
           const data = await response.json();
           const { state, sessionActive } = data;
           console.log('ObserverViewPage: Received state with', state?.tokens?.length || 0, 'tokens and', state?.props?.length || 0, 'props');
-          console.log('ObserverViewPage: showObserverCards =', state?.showObserverCards);
+          console.log('ObserverViewPage: fogEnabled =', state?.fogEnabled, 'showObserverCards =', state?.showObserverCards);
           if (state) {
             // Prepend API_URL to backgroundImage if it's a relative path
             if (state.backgroundImage && !state.backgroundImage.startsWith('http')) {
               state.backgroundImage = `${API_URL}${state.backgroundImage}`;
             }
+            // Use the server's revealedPath as source of truth since we're syncing to it
             setGameState(state);
             
             // Update session ended state based on sessionActive flag
@@ -93,6 +96,25 @@ export default function ObserverViewPage() {
 
     return () => clearInterval(interval);
   }, [campaignName, sessionName]);
+
+  // Subscribe to WebSocket events for real-time updates
+  useEffect(() => {
+    // Subscribe to fog toggle events
+    const unsubscribeFog = subscribe('fogToggled', (data) => {
+      console.log('ObserverViewPage: Received fogToggled event', data);
+      setGameState(prev => ({ ...prev, fogEnabled: data.fogEnabled }));
+    });
+
+    return () => {
+      unsubscribeFog?.();
+    };
+  }, [subscribe]);
+
+  // Sync revealed path happens through the update-token-position endpoint
+  // When a player token moves to a new location, the server automatically adds it to revealedPath
+
+  // Sync revealed path happens through the game state that's already being tracked
+  // Revealed path changes are included in the next poll from the backend
 
   const activeTokens = gameState.tokens
     .filter(t => t.active)
@@ -292,8 +314,8 @@ export default function ObserverViewPage() {
           revealZones={gameState.revealZones || []}
           permanentlyRevealedZones={new Set(gameState.permanentlyRevealedZones || [])}
           userRole={user?.role as 'gm' | 'player' | undefined}
-          campaignName={campaignName}
-          sessionName={sessionName}
+          campaign={campaignName}
+          session={sessionName}
         />
       </div>
     </>

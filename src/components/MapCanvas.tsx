@@ -3,7 +3,11 @@ import './MapCanvas.css';
 import type { Actor, Token, Prop, ImageState, RevealZone } from '../types';
 import TokenCreator from './TokenCreator';
 import TokenCard from './TokenCard';
+import { useGameWebSocket } from '../hooks/useGameWebSocket';
+import { useTokenMovement } from '../hooks/useTokenMovement';
+import { calculateGridCellPixelSize } from '../utils/tokenMovement';
 import PropCreator from './PropCreator';
+import { renderFog } from '../utils/fogRendering';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -19,10 +23,13 @@ const getCurrentImageUrl = (item: Token | Prop): string | undefined => {
 interface MapCanvasProps
 {
   backgroundImage: string | null;
+  campaign?: string;
+  session?: string;
 }
 
-export default function MapCanvas({ backgroundImage }: MapCanvasProps)
+export default function MapCanvas({ backgroundImage, campaign = '', session = '' }: MapCanvasProps)
 {
+  const { send: sendWebSocket, subscribe } = useGameWebSocket(campaign, session);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fogCanvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
@@ -84,10 +91,35 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
   const justFinishedDragOperation = useRef<boolean>(false);
   const hasLoadedInitialState = useRef<boolean>(false);
 
+  // Calculate actual pixel-based grid cell size for distance validation
+  const pixelGridCellSize = calculateGridCellPixelSize(canvasRef.current, imageRef.current, gridColumns, gridRows);
+
+  // Initialize shared token movement validation hook (with skipSnapping since we do our own snapping)
+  const { validateMove, applyMove } = useTokenMovement(tokens, { props, skipSnapping: true, gridCellDistance: pixelGridCellSize });
+
   // Refs to track current drag state (fixes stale closure in event handlers)
   const draggedTokenRef = useRef<string | null>(null);
   const draggedPropRef = useRef<string | null>(null);
   const isDraggingRef = useRef<boolean>(false);
+
+  // Subscribe to WebSocket token movement updates
+  useEffect(() => {
+    const unsubscribe = subscribe('tokenMoved', (data: any) => {
+      console.log('MapCanvas: Received tokenMoved event', data);
+      setTokens(prev => prev.map(token =>
+        token.id === data.tokenId
+          ? {
+              ...token,
+              x: data.x,
+              y: data.y,
+              currentlyFacing: data.currentlyFacing
+            }
+          : token
+      ));
+    });
+
+    return unsubscribe;
+  }, [subscribe]);
 
   // Sync game state to backend on changes
   useEffect(() =>
@@ -132,6 +164,8 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
           } : null,
         };
 
+        console.log('MapCanvas: Syncing state to server, fogEnabled =', state.fogEnabled);
+
         try
         {
           await fetch(`${API_URL}/api/game-state`, {
@@ -140,6 +174,7 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
             credentials: 'include',
             body: JSON.stringify({ state })
           });
+          console.log('MapCanvas: Sync successful');
         } catch (error)
         {
           console.error('Failed to sync game state:', error);
@@ -403,18 +438,22 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
       const posKey = `${x},${y}`;
       if (assignedPositions.has(posKey)) return true;
       
-      return tokens.some(t => 
-        t.x === x && t.y === y && t.x !== undefined && t.y !== undefined
-      );
+      // Check if a token is at this position
+      if (tokens.some(t => t.x === x && t.y === y && t.x !== undefined && t.y !== undefined)) {
+        return true;
+      }
+      
+      // Check if a prop is at this position
+      if (props.some(p => p.x === x && p.y === y && p.x !== undefined && p.y !== undefined)) {
+        return true;
+      }
+      
+      return false;
     };
     
     // Helper function to find nearest unoccupied grid square
     const findNearestUnoccupied = (startX: number, startY: number): { x: number, y: number } => {
-      // Start from the party_start position
-      if (!isOccupied(startX, startY)) {
-        return { x: startX, y: startY };
-      }
-      
+      // Always start search from radius 1 (never place on the party_start itself)
       // Search in expanding squares around the start position
       for (let radius = 1; radius <= 10; radius++) {
         for (let dx = -radius; dx <= radius; dx++) {
@@ -928,209 +967,26 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
     ctx.fillStyle = `rgba(0, 0, 0, ${fogOpacity})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate grid cell size in pixels for fog reveal radius
-    let gridCellSize = 20; // Default fallback
-    if (imageRef.current && gridColumns > 0 && gridRows > 0)
-    {
-      const img = imageRef.current;
-      const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-      const imgWidth = img.width * scale;
-      const imgHeight = img.height * scale;
-      const cellWidth = imgWidth / gridColumns;
-      const cellHeight = imgHeight / gridRows;
-      // Use average of width and height for square-ish cells
-      gridCellSize = (cellWidth + cellHeight) / 2;
-    }
-
-    // Helper function to parse light radius from tags (e.g., "light[30]" -> 30)
-    const parseLightRadius = (tags?: string): number | null => {
-      if (!tags) return null;
-      const match = tags.match(/light\[(\d+)\]/i);
-      return match ? parseInt(match[1], 10) : null;
-    };
-
-    // Helper function to get effective tags from token/prop considering active state
-    const getEffectiveTags = (item: Token | Prop): string | undefined => {
-      if (item.activeState && item.states) {
-        const activeStateObj = item.states.find(s => s.name === item.activeState);
-        // If a state is active, only use that state's tags (even if undefined)
-        // Don't fall back to base tags when a state is explicitly selected
-        return activeStateObj?.tags;
-      }
-      // No active state, use base tags
-      return item.tags;
-    };
-
-    // Collect all light sources (tokens and props with light tags)
-    const lightSources: Array<{ x: number; y: number; radius: number }> = [];
-
-    // Check all tokens for light tags
-    tokens.forEach(token => {
-      if (token.x !== undefined && token.y !== undefined && token.x !== null && token.y !== null) {
-        const effectiveTags = getEffectiveTags(token);
-        const lightRadius = parseLightRadius(effectiveTags);
-        if (lightRadius) {
-          // Convert feet to grid squares
-          const lightRadiusSquares = lightRadius / gridCellDistance;
-          lightSources.push({ x: token.x, y: token.y, radius: lightRadiusSquares });
-        }
-      }
-    });
-
-    // Check all props for light tags
-    props.forEach(prop => {
-      const effectiveTags = getEffectiveTags(prop);
-      const lightRadius = parseLightRadius(effectiveTags);
-      if (lightRadius) {
-        // Convert feet to grid squares
-        const lightRadiusSquares = lightRadius / gridCellDistance;
-        lightSources.push({ x: prop.x, y: prop.y, radius: lightRadiusSquares });
-      }
-    });
-
-    // Only clear fog around active player tokens if there are light sources
-    const activePlayerTokens = tokens.filter(token => token.active && token.actor?.player === true);
-    
-    
-    if (activePlayerTokens.length > 0 || revealedPath.length > 0 || lightSources.length > 0 || testingZone)
-    {
-      ctx.save();
-      ctx.globalCompositeOperation = 'destination-out';
-
-      // Reveal fog along the path tokens have traveled
-      if (revealedPath.length > 0)
-      {
-        let effectiveRevealDistance = fogRevealDistance;
-        if (lightingCondition === 'darkness')
-        {
-          effectiveRevealDistance = fogRevealDistance * 0.5;
-        }
-
-        revealedPath.forEach(point =>
-        {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate((transform.rotation * Math.PI) / 180);
-          ctx.scale(transform.scale, transform.scale);
-          ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-
-          const gradient = ctx.createRadialGradient(
-            point.x, point.y, 0,
-            point.x, point.y, gridCellSize * effectiveRevealDistance
-          );
-          gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
-          gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.8)');
-          gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-          ctx.fillStyle = gradient;
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, gridCellSize * effectiveRevealDistance, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.restore();
-        });
-      }
-
-      activePlayerTokens.forEach(token =>
-      {
-        // Skip tokens without positions
-        if (token.x === undefined || token.y === undefined || token.x === null || token.y === null) return;
-        
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((transform.rotation * Math.PI) / 180);
-        ctx.scale(transform.scale, transform.scale);
-        ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-
-        // Adjust reveal distance based on lighting condition
-        let effectiveRevealDistance = fogRevealDistance;
-        if (lightingCondition === 'darkness')
-        {
-          effectiveRevealDistance = fogRevealDistance * 0.5; // Reduce visibility in darkness
-        }
-
-        // Create gradient for smooth fog reveal using grid cell size
-        const gradient = ctx.createRadialGradient(
-          token.x, token.y, 0,
-          token.x, token.y, gridCellSize * effectiveRevealDistance
-        );
-        gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
-        gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.8)');
-        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(token.x, token.y, gridCellSize * effectiveRevealDistance, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
+    // Use shared fog rendering utility (only if image is loaded)
+    if (imageRef.current) {
+      renderFog({
+        canvas,
+        image: imageRef.current,
+        ctx,
+        transform,
+        tokens,
+        props,
+        revealedPath,
+        revealZones,
+        permanentlyRevealedZones,
+        fogRevealDistance,
+        lightingCondition,
+        gridColumns,
+        gridRows,
+        gridCellDistance,
+        testingZone,
+        onPermanentlyReveal: (zoneId) => setPermanentlyRevealedZones(prev => new Set(prev).add(zoneId)),
       });
-
-      // Reveal fog around light sources
-      lightSources.forEach(light => {
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((transform.rotation * Math.PI) / 180);
-        ctx.scale(transform.scale, transform.scale);
-        ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-
-        // Create gradient for smooth fog reveal using grid cell size
-        const gradient = ctx.createRadialGradient(
-          light.x, light.y, 0,
-          light.x, light.y, gridCellSize * light.radius
-        );
-        gradient.addColorStop(0, 'rgba(0, 0, 0, 1)');
-        gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.8)');
-        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(light.x, light.y, gridCellSize * light.radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
-      });
-
-      // Reveal fog in reveal zones (when player tokens enter them or if permanent)
-      revealZones.forEach(zone => {
-        // Check if any active player token is in the zone
-        const playerInZone = activePlayerTokens.some(token => {
-          if (token.x === undefined || token.y === undefined) return false;
-          return (
-            token.x >= zone.x &&
-            token.x <= zone.x + zone.width &&
-            token.y >= zone.y &&
-            token.y <= zone.y + zone.height
-          );
-        });
-
-        // If permanent zone has been revealed once, keep it revealed (unless testing, which clears it)
-        if (playerInZone && zone.permanent && testingZone !== zone.id) {
-          setPermanentlyRevealedZones(prev => new Set(prev).add(zone.id));
-        }
-
-        // Reveal if:
-        // - Player is in zone OR
-        // - It's permanently revealed (and not being tested) OR
-        // - It's being tested (test overrides permanent state to show fresh preview)
-        const shouldReveal = playerInZone || (permanentlyRevealedZones.has(zone.id) && testingZone !== zone.id) || testingZone === zone.id;
-
-        if (shouldReveal) {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate((transform.rotation * Math.PI) / 180);
-          ctx.scale(transform.scale, transform.scale);
-          ctx.translate(-canvas.width / 2 + transform.x, -canvas.height / 2 + transform.y);
-
-          // Clear fog in rectangle
-          ctx.fillStyle = 'rgba(0, 0, 0, 1)';
-          ctx.fillRect(zone.x, zone.y, zone.width, zone.height);
-
-          ctx.restore();
-        }
-      });
-
-      ctx.restore();
     }
 
     // Draw fog reveal rectangle preview
@@ -1825,20 +1681,15 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
 
       if (currentToken.x === undefined || currentToken.y === undefined || currentToken.x === null || currentToken.y === null) return;
 
-      // Calculate grid distance from current position
-      const distance = getGridDistance(currentToken.x, currentToken.y, snappedPos.x, snappedPos.y);
-
-      // Only allow movement of exactly 1 grid square
-      if (distance !== 1)
-      {
-        return; // Don't move if distance is not exactly 1
+      console.log('Dragging token:', draggedTokenRef.current, 'to snapped position:', snappedPos);
+      // Validate move using shared logic (skipSnapping: true because we already snapped)
+      const validatedMove = validateMove(currentToken, snappedPos.x, snappedPos.y);
+      if (!validatedMove) {
+        return; // Move is invalid (distance != 1 or collision)
       }
 
-      // Check if position is occupied by another token
-      if (isPositionOccupied(snappedPos.x, snappedPos.y, draggedTokenRef.current))
-      {
-        return; // Don't move to occupied position
-      }
+      // Apply the validated move
+      const updatedToken = applyMove(currentToken, validatedMove);
 
       setTokens(prev => prev.map(token =>
       {
@@ -1847,43 +1698,46 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
           // Only add to revealed path if this is an active player token
           if (token.active && token.actor?.player === true)
           {
-            setRevealedPath(path => [...path, { x: snappedPos.x, y: snappedPos.y }]);
-          }
-          
-          // Update facing direction based on horizontal movement
-          const deltaX = snappedPos.x - (token.x || 0);
-          const updatedToken = { ...token, x: snappedPos.x, y: snappedPos.y };
-          if (deltaX > 0) {
-            // Moving right
-            updatedToken.currentlyFacing = 'right';
-          } else if (deltaX < 0) {
-            // Moving left
-            updatedToken.currentlyFacing = 'left';
+            setRevealedPath(path => [...path, { x: validatedMove.x, y: validatedMove.y }]);
           }
           
           return updatedToken;
         }
         return token;
       }));
-      console.log('Setting draggedToken draggedItemPosition to:', { id: draggedTokenRef.current, x: snappedPos.x, y: snappedPos.y });
+      console.log('Setting draggedToken draggedItemPosition to:', { id: draggedTokenRef.current, x: validatedMove.x, y: validatedMove.y });
 
       // Update live drag position for immediate visual feedback
-      setDraggedItemPosition({ id: draggedTokenRef.current, x: snappedPos.x, y: snappedPos.y });
+      setDraggedItemPosition({ id: draggedTokenRef.current, x: validatedMove.x, y: validatedMove.y });
+
+      // Save to backend immediately during drag via WebSocket
+      sendWebSocket({
+        type: 'tokenMoved',
+        data: {
+          tokenId: updatedToken.id,
+          x: updatedToken.x,
+          y: updatedToken.y,
+          currentlyFacing: updatedToken.currentlyFacing
+        }
+      });
     } else if (draggedPropRef.current)
     {
       console.log('In draggedProp block! draggedProp =', draggedPropRef.current);
-      // Move the prop (props move freely, not snapped to grid)
+      // Move the prop (props move freely, unless shift is held for grid snapping)
       const canvasPos = screenToCanvas(e.clientX, e.clientY);
+      
+      // Snap to grid if shift key is held
+      const finalPos = e.shiftKey ? snapToGrid(canvasPos.x, canvasPos.y) : canvasPos;
 
       // Update live drag position FIRST for immediate visual feedback
-      setDraggedItemPosition({ id: draggedPropRef.current, x: canvasPos.x, y: canvasPos.y });
+      setDraggedItemPosition({ id: draggedPropRef.current, x: finalPos.x, y: finalPos.y });
 
       // Update prop position in state
       setProps(prev => prev.map(prop =>
       {
         if (prop.id === draggedPropRef.current)
         {
-          return { ...prop, x: canvasPos.x, y: canvasPos.y };
+          return { ...prop, x: finalPos.x, y: finalPos.y };
         }
         return prop;
       }));
@@ -2037,6 +1891,14 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
       return;
     }
 
+    // Save token position if we were dragging a token
+    if (draggedTokenRef.current) {
+      const movedToken = tokens.find(t => t.id === draggedTokenRef.current);
+      if (movedToken) {
+        console.log('Token drag ended at:', movedToken.x, movedToken.y);
+      }
+    }
+
     isDraggingRef.current = false;
     draggedTokenRef.current = null;
     draggedPropRef.current = null;
@@ -2128,33 +1990,6 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
   };
 
   // Calculate grid distance between two positions
-  const getGridDistance = (x1: number, y1: number, x2: number, y2: number): number =>
-  {
-    if (!canvasRef.current || !imageRef.current || gridColumns <= 0 || gridRows <= 0)
-    {
-      return 0;
-    }
-
-    const canvas = canvasRef.current;
-    const img = imageRef.current;
-    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-    const imgWidth = img.width * scale;
-    const imgHeight = img.height * scale;
-    const offsetX = (canvas.width - imgWidth) / 2;
-    const offsetY = (canvas.height - imgHeight) / 2;
-
-    const cellWidth = imgWidth / gridColumns;
-    const cellHeight = imgHeight / gridRows;
-
-    // Convert to grid coordinates
-    const gridX1 = Math.floor((x1 - offsetX) / cellWidth);
-    const gridY1 = Math.floor((y1 - offsetY) / cellHeight);
-    const gridX2 = Math.floor((x2 - offsetX) / cellWidth);
-    const gridY2 = Math.floor((y2 - offsetY) / cellHeight);
-
-    // Calculate Manhattan distance (grid squares)
-    return Math.abs(gridX2 - gridX1) + Math.abs(gridY2 - gridY1);
-  };
 
   // Change token/prop state
   const changeTokenState = (tokenId: string, stateName: string | undefined) => {
@@ -3393,7 +3228,14 @@ export default function MapCanvas({ backgroundImage }: MapCanvasProps)
             <select
               id="fog-toggle"
               value={fogEnabled}
-              onChange={(e) => setFogEnabled(e.target.value as 'on' | 'off-all' | 'off-gm')}
+              onChange={(e) => {
+                const newValue = e.target.value as 'on' | 'off-all' | 'off-gm';
+                setFogEnabled(newValue);
+                // Send fog toggle via WebSocket if connected
+                if (campaign && session) {
+                  sendWebSocket({ type: 'fogToggled', data: { fogEnabled: newValue } });
+                }
+              }}
             >
               <option value="off-gm">Off (GM Only)</option>
               <option value="off-all">Off (All)</option>

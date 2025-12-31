@@ -16,6 +16,9 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Source maps for debugging */
+    "sourceMap": true,
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,

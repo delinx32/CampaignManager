@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 import AppHeader from './AppHeader';
 import './ShareKeyLanding.css';
 
@@ -19,7 +18,6 @@ interface Campaign {
 
 function ShareKeyLanding() {
   const { shareKey } = useParams<{ shareKey: string }>();
-  const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

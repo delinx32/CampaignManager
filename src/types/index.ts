@@ -12,6 +12,7 @@ export interface ImageState {
   name: string;
   imageUrl: string;
   tags?: string; // Comma-separated tags
+  playerInteractible?: boolean; // Can players switch to this state?
 }
 
 export interface Token {

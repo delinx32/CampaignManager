@@ -140,6 +140,9 @@ npm run dev
 - **No markdown summaries**: Don't create documentation files after changes unless explicitly requested
 - Always check for and fix problems and errors after making changes
 - Always update documentation, PRDs, or other supporting files to reflect changes made
+- Prefer components and widgets over duplicate code
+- Prefer library style implementation over inline code where reuse is likely
+- Strive for code reuse and modularity
 
 ### Recent Major Changes
 - ✅ Share key landing at `/:shareKey` (moved from `/sharekey/:shareKey`)

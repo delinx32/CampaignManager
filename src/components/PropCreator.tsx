@@ -349,6 +349,27 @@ export default function PropCreator({ onCreateProp, onUpdateProp, editingProp, o
                             fontSize: '11px'
                           }}
                         />
+                        <label style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: '6px',
+                          fontSize: '12px',
+                          color: '#aaa',
+                          marginTop: '4px',
+                          cursor: 'pointer'
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={state.playerInteractible || false}
+                            onChange={(e) => {
+                              setStates(prev => prev.map(s => 
+                                s.name === state.name ? { ...s, playerInteractible: e.target.checked } : s
+                              ));
+                            }}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          Player Interactible
+                        </label>
                       </div>
                       <button 
                         type="button" 

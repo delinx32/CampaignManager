@@ -148,8 +148,6 @@ export default function GMView() {
         const data = await response.json();
         setIsSessionActive(data.isSessionActive);
         setCurrentSessionName(null);
-        // Reset to 'new' session option
-        setSelectedSession('new');
       } else {
         const error = await response.json();
         alert(`Failed to end session: ${error.error}`);
@@ -490,7 +488,7 @@ export default function GMView() {
             )}
           </>
         ) : (
-          <MapCanvas backgroundImage={backgroundImage} />
+          <MapCanvas backgroundImage={backgroundImage} campaign={campaignName || ''} session={currentSessionName || ''} />
         )}
       </main>
       {backgroundImage && (

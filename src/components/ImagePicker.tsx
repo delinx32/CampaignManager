@@ -138,33 +138,18 @@ export default function ImagePicker({
       setIsSearching(true);
       setSearchError('');
 
-      // Download the image through our proxy to temp folder
+      // Download the image through our proxy
       const response = await fetch(`${API_URL}/api/download-image?url=${encodeURIComponent(imageUrl)}`);
       if (!response.ok) {
         throw new Error('Failed to download image');
       }
       const blob = await response.blob();
       
-      // Upload to temp folder
-      const formData = new FormData();
+      // Create a File object from the downloaded blob
       const file = new File([blob], `google-${Date.now()}.jpg`, { type: blob.type });
-      formData.append('image', file);
-      formData.append('type', folder);
-
-      const uploadResponse = await fetch(`${API_URL}/api/upload`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload image');
-      }
-
-      const uploadData = await uploadResponse.json();
       
-      // Select the uploaded image
-      onUrlSelect(`${API_URL}${uploadData.url}`);
+      // Pass it to the file select handler (will be uploaded when form is submitted)
+      onFileSelect(file);
       
       // Close the search popup
       setShowSearchPopup(false);
